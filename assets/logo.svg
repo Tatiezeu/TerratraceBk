@@ -1,0 +1,31 @@
+<svg width="200" height="60" viewBox="0 0 200 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Premium SVG Icon -->
+  <g filter="url(#drop_shadow)">
+    <path d="M24 6L40 14V38L24 46L8 38V14L24 6Z" fill="url(#gold_gradient)" />
+    <path d="M24 14V38M16 20H32M18 32L24 38L30 32" stroke="#002147" stroke-width="2.5" stroke-linecap="round" stroke-linejoin-round="round" opacity="0.8" />
+    <circle cx="24" cy="38" r="4" fill="#002147" />
+  </g>
+
+  <!-- Typography -->
+  <text x="56" y="38" fill="#002147" style="font-family: sans-serif; font-weight: 900; font-size: 24px;">Terra<tspan fill="#D4AF37">Trace</tspan></text>
+  <text x="56" y="48" fill="#002147" opacity="0.6" style="font-family: sans-serif; font-weight: 600; font-size: 8px; text-transform: uppercase; letter-spacing: 0.3em;">Trust in Land</text>
+
+  <!-- Definitions -->
+  <defs>
+    <linearGradient id="gold_gradient" x1="8" y1="6" x2="40" y2="46" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F4C430" />
+      <stop offset="0.5" stop-color="#D4AF37" />
+      <stop offset="1" stop-color="#B8860B" />
+    </linearGradient>
+    <filter id="drop_shadow" x="0" y="0" width="48" height="60" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="2"/>
+      <feGaussianBlur stdDeviation="2"/>
+      <feComposite in2="hardAlpha" operator="out"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_12"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_12" result="shape"/>
+    </filter>
+  </defs>
+</svg>
