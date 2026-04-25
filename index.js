@@ -23,7 +23,7 @@ app.use(cors({
 
 // Static files
 app.use('/assets', express.static(path.join(__dirname, 'assets')));
-app.use('/uploads', express.static(path.join(__dirname, 'assets/images')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Database
 // Set mongoose options

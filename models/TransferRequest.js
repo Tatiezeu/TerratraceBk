@@ -6,27 +6,38 @@ const transferRequestSchema = new mongoose.Schema({
         ref: 'LandPlot',
         required: true
     },
-    sender: { // Current owner initiating transfer or buyer initiating purchase
+    sender: { // Usually the buyer/client initiating the request
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
         required: true
     },
-    receiver: { // Intended new owner
+    receiver: { // The intended new owner
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
         required: true
     },
     notary: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User' // User with role 'Notary'
+        ref: 'User',
+        required: true
     },
     lro: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User' // User with role 'LRO'
+        ref: 'User'
     },
     status: {
         type: String,
-        enum: ['Initiated', 'Notary_Review', 'LRO_Review', 'Awaiting_Payment', 'Completed', 'Rejected'],
+        enum: [
+            'Initiated', 
+            'Under_Verification', 
+            'Awaiting_Fee_Payment', 
+            'Payment_Submitted', 
+            'Payment_Verified',
+            'Forwarded_to_LRO', 
+            'Public_Notice',
+            'Completed', 
+            'Rejected'
+        ],
         default: 'Initiated'
     },
     transferType: {
@@ -34,28 +45,37 @@ const transferRequestSchema = new mongoose.Schema({
         enum: ['purchase', 'inheritance', 'direct_grant'],
         required: true
     },
-    portionType: {
-        type: String,
-        enum: ['full', 'sub'],
-        default: 'full'
+    // Client uploaded documents
+    clientDocuments: [String],
+    
+    // Notary uploaded documents
+    buyerDocuments: [String],
+    certifiedDocuments: [String],
+    
+    // Payment details
+    feeNotice: {
+        amount: Number,
+        description: String,
+        sentAt: Date
     },
-    surfaceArea: {
-        type: Number // Required if portionType is 'sub'
-    },
-    documents: [{
-        name: String,
-        url: String,
-        type: {
-            type: String,
-            enum: ['CNI', 'Deed_of_Sale', 'Inheritance_Certificate', 'Other']
-        },
-        uploadedAt: {
-            type: Date,
-            default: Date.now
-        }
-    }],
+    paymentReceipt: String,
+    
     notaryFeedback: String,
     lroFeedback: String,
+    
+    // Public Notice Phase
+    publicNotice: {
+        startDate: Date,
+        endDate: Date,
+        isActive: { type: Boolean, default: false }
+    },
+    objections: [{
+        sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        reason: String,
+        attachments: [String],
+        createdAt: { type: Date, default: Date.now }
+    }],
+
     history: [{
         status: String,
         updatedBy: {

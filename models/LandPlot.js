@@ -28,42 +28,61 @@ const landPlotSchema = new mongoose.Schema({
         type: String,
         required: [true, 'Location is required'],
         trim: true
-    },
-    price: {
+      },
+      price: {
         type: Number,
         required: [true, 'Price is required']
-    },
-    area: {
+      },
+      area: {
         type: Number, // in square meters
         required: [true, 'Area is required']
-    },
-    coordinates: {
+      },
+      coordinates: {
         lat: Number,
         lng: Number
-    },
-    images: [{
+      },
+      images: [{
         type: String
-    }],
-    coverImage: {
+      }],
+      coverImage: {
         type: String,
         default: 'default-plot.jpg'
-    },
-    matterportId: {
+      },
+      matterportId: {
         type: String,
         trim: true
-    },
-    description: {
+      },
+      description: {
         type: String,
         trim: true
-    },
-    status: {
+      },
+      status: {
         type: String,
-        enum: ['cleared', 'sold', 'pending', 'under_review', 'flagged'],
+        enum: ['cleared', 'sold', 'pending', 'under_review', 'flagged', 'blocked', 'transferred', 'disputed'],
         default: 'cleared'
-    },
-    titleDeedUrl: {
+      },
+      lastTransferDate: {
+        type: Date,
+        default: Date.now
+      },
+      titleDeedUrl: {
         type: String
-    }
+      },
+      ownershipHistory: [{
+        owner: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User'
+        },
+        acquiredDate: {
+            type: Date
+        },
+        transferDate: {
+            type: Date,
+            default: Date.now
+        },
+        transferType: String,
+        previousLandCode: String
+      }]
 }, {
     timestamps: true
 });

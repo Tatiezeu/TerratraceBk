@@ -26,14 +26,15 @@ exports.updateMe = async (req, res) => {
         }
 
         // Filter out fields that shouldn't be updated directly
-        const filteredBody = { ...req.body };
-        delete filteredBody.role;
-        delete filteredBody.isVerified;
-        delete filteredBody.email; // Usually email update requires extra verification
+        const filteredBody = {};
+        const allowedFields = ['firstName', 'lastName', 'phone'];
+        allowedFields.forEach(el => {
+            if (req.body[el]) filteredBody[el] = req.body[el];
+        });
 
         // Handle profile picture upload
         if (req.file) {
-            filteredBody.profilePic = `/uploads/profiles/${req.file.filename}`;
+            filteredBody.profilePic = `/uploads/${req.file.filename}`;
         }
 
         const updatedUser = await User.findByIdAndUpdate(req.user.id, filteredBody, {
@@ -116,7 +117,10 @@ exports.registerOfficer = async (req, res) => {
 // Get all users
 exports.getAllUsers = async (req, res) => {
     try {
-        const users = await User.find().select('-verificationCode -verificationCodeExpires');
+        const filter = {};
+        if (req.query.role) filter.role = req.query.role;
+        
+        const users = await User.find(filter).select('-verificationCode -verificationCodeExpires');
         res.status(200).json({
             success: true,
             data: users

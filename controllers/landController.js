@@ -6,13 +6,17 @@ exports.registerLandAndOwner = async (req, res) => {
     try {
         const { 
             landType, regionCode, plotNumber, location, price, area, coordinates, description, matterportId,
-            ownerFirstName, ownerLastName, ownerEmail, ownerPhone, ownerCNI, ownerPassword, status
+            ownerFirstName, ownerLastName, ownerEmail, ownerPhone, ownerCNI, ownerPassword, status,
+            ownerId
         } = req.body;
 
         // 1) Create or find user
         let user;
         if (landType === "00050" || landType === "public") {
             user = await User.findOne({ role: "SuperAdmin" });
+        } else if (ownerId) {
+            user = await User.findById(ownerId);
+            if (!user) return res.status(404).json({ success: false, message: 'Existing owner not found' });
         } else {
             user = await User.findOne({ email: ownerEmail });
             if (!user) {
@@ -113,7 +117,7 @@ exports.createLandPlot = async (req, res) => {
 
 exports.getAllPlots = async (req, res) => {
     try {
-        const plots = await LandPlot.find().populate('owner', 'firstName lastName');
+        const plots = await LandPlot.find().populate('owner', 'firstName lastName').populate('ownershipHistory.owner', 'firstName lastName');
         res.status(200).json({
             success: true,
             count: plots.length,
@@ -126,24 +130,18 @@ exports.getAllPlots = async (req, res) => {
 
 exports.getMyPlots = async (req, res) => {
     try {
-        let query = { owner: req.user.id };
-        
-        // If SuperAdmin, also include all state-owned plots
+        const TransferRequest = require('../models/TransferRequest');
+        const ongoingTransfers = await TransferRequest.find({
+            receiver: req.user.id,
+            status: { $nin: ['Completed', 'Rejected'] }
+        }).select('plot');
+        const transferPlotIds = ongoingTransfers.map(tr => tr.plot);
+        let query = { $or: [{ owner: req.user.id }, { _id: { $in: transferPlotIds } }] };
         if (req.user.role === 'SuperAdmin') {
-            query = {
-                $or: [
-                    { owner: req.user.id },
-                    { landType: '00050' }
-                ]
-            };
+            query = { $or: [{ owner: req.user.id }, { landType: '00050' }, { _id: { $in: transferPlotIds } }] };
         }
-
-        const plots = await LandPlot.find(query);
-        res.status(200).json({
-            success: true,
-            count: plots.length,
-            data: plots
-        });
+        const plots = await LandPlot.find(query).populate('owner', 'firstName lastName').populate('ownershipHistory.owner', 'firstName lastName');
+        res.status(200).json({ success: true, count: plots.length, data: plots });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
@@ -151,12 +149,40 @@ exports.getMyPlots = async (req, res) => {
 
 exports.getPlotByCode = async (req, res) => {
     try {
-        const plot = await LandPlot.findOne({ landCode: req.params.code }).populate('owner', 'firstName lastName');
+        const plot = await LandPlot.findOne({ landCode: req.params.code }).populate('owner', 'firstName lastName').populate('ownershipHistory.owner', 'firstName lastName');
         if (!plot) {
             return res.status(404).json({ success: false, message: 'Land plot not found' });
         }
         res.status(200).json({
             success: true,
+            data: plot
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+exports.updatePlotStatus = async (req, res) => {
+    try {
+        const { status } = req.body;
+        
+        if (req.user.role !== 'SuperAdmin' && req.user.role !== 'LRO') {
+            return res.status(403).json({ success: false, message: 'Unauthorized' });
+        }
+
+        const plot = await LandPlot.findByIdAndUpdate(
+            req.params.id,
+            { status },
+            { new: true, runValidators: true }
+        );
+
+        if (!plot) {
+            return res.status(404).json({ success: false, message: 'Land plot not found' });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: `Land status updated to ${status}`,
             data: plot
         });
     } catch (err) {

@@ -9,6 +9,7 @@ router.use(protect);
 router.get('/me', userController.getMe);
 router.patch("/update-me", require("../utils/upload").single("profilePic"), userController.updateMe);
 router.patch('/update-password', userController.updatePassword);
+router.get('/recipients', userController.getAllUsers);
 
 // Admin only routes
 router.use(restrictTo('SuperAdmin'));
