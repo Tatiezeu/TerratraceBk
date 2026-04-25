@@ -6,35 +6,41 @@ exports.registerLandAndOwner = async (req, res) => {
     try {
         const { 
             landType, regionCode, plotNumber, location, price, area, coordinates, description, matterportId,
-            ownerFirstName, ownerLastName, ownerEmail, ownerPhone, ownerCNI, ownerPassword
+            ownerFirstName, ownerLastName, ownerEmail, ownerPhone, ownerCNI, ownerPassword, status
         } = req.body;
 
         // 1) Create or find user
-        let user = await User.findOne({ email: ownerEmail });
-        if (!user) {
-            user = await User.create({
-                firstName: ownerFirstName,
-                lastName: ownerLastName,
-                email: ownerEmail,
-                phone: ownerPhone,
-                cniNumber: ownerCNI,
-                password: ownerPassword,
-                role: 'Landowner',
-                isVerified: true,
-                status: 'active'
-            });
+        let user;
+        if (landType === "00050" || landType === "public") {
+            user = await User.findOne({ role: "SuperAdmin" });
+        } else {
+            user = await User.findOne({ email: ownerEmail });
+            if (!user) {
+                user = await User.create({
+                    firstName: ownerFirstName,
+                    lastName: ownerLastName,
+                    email: ownerEmail,
+                    phone: ownerPhone,
+                    cniNumber: ownerCNI,
+                    password: ownerPassword,
+                    role: "Landowner",
+                    isVerified: true,
+                    status: "active"
+                });
+            }
         }
 
         // 2) Generate land code
-        const landCode = generateLandCode(landType, regionCode, user.cniNumber, plotNumber);
+        const finalPlotNumber = (landType === "00050" || landType === "public") ? (plotNumber || Math.floor(1000 + Math.random() * 9000).toString()) : plotNumber;
+        const landCode = generateLandCode(landType === "public" ? "00050" : landType, regionCode, (landType === "public" || landType === "00050") ? "00000" : (user.cniNumber || "00000"), finalPlotNumber);
 
         // 3) Create land plot
         const newPlot = await LandPlot.create({
             landCode,
             owner: user._id,
-            landType,
+            landType: landType === "public" ? "00050" : landType,
             regionCode,
-            plotNumber,
+            plotNumber: finalPlotNumber,
             location: location || 'Not Specified',
             price: price || 0,
             area: area || 0,
@@ -42,7 +48,7 @@ exports.registerLandAndOwner = async (req, res) => {
             matterportId,
             description,
             coverImage: req.file ? `/assets/images/plots/${req.file.filename}` : 'default-plot.jpg',
-            status: 'cleared'
+            status: status || ((landType === "public" || landType === "00050") ? "flagged" : "cleared")
         });
 
         res.status(201).json({
@@ -61,7 +67,7 @@ exports.registerLandAndOwner = async (req, res) => {
 
 exports.createLandPlot = async (req, res) => {
     try {
-        const { location, price, area, coordinates, matterportId, description, landType, regionCode, plotNumber } = req.body;
+        const { location, price, area, coordinates, matterportId, description, landType, regionCode, plotNumber, status } = req.body;
         
         // Use authenticated user as owner
         const owner = req.user.id;
@@ -72,7 +78,7 @@ exports.createLandPlot = async (req, res) => {
         }
 
         // Generate the unique land code using the new algorithm
-        const landCode = generateLandCode(landType, regionCode, cniNumber, plotNumber);
+        const landCode = generateLandCode(landType === "public" ? "00050" : landType, regionCode, cniNumber, plotNumber);
 
         // Check if landCode already exists
         const existing = await LandPlot.findOne({ landCode });
@@ -83,7 +89,7 @@ exports.createLandPlot = async (req, res) => {
         const newPlot = await LandPlot.create({
             landCode,
             owner,
-            landType,
+            landType: landType === "public" ? "00050" : landType,
             regionCode,
             plotNumber,
             location,
@@ -93,7 +99,7 @@ exports.createLandPlot = async (req, res) => {
             matterportId,
             description,
             coverImage: req.file ? `/assets/images/plots/${req.file.filename}` : 'default-plot.jpg',
-            status: 'cleared'
+            status: status || ((landType === "public" || landType === "00050") ? "flagged" : "cleared")
         });
 
         res.status(201).json({
@@ -120,7 +126,19 @@ exports.getAllPlots = async (req, res) => {
 
 exports.getMyPlots = async (req, res) => {
     try {
-        const plots = await LandPlot.find({ owner: req.user.id });
+        let query = { owner: req.user.id };
+        
+        // If SuperAdmin, also include all state-owned plots
+        if (req.user.role === 'SuperAdmin') {
+            query = {
+                $or: [
+                    { owner: req.user.id },
+                    { landType: '00050' }
+                ]
+            };
+        }
+
+        const plots = await LandPlot.find(query);
         res.status(200).json({
             success: true,
             count: plots.length,

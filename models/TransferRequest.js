@@ -31,8 +31,16 @@ const transferRequestSchema = new mongoose.Schema({
     },
     transferType: {
         type: String,
-        enum: ['purchase', 'inheritance'],
+        enum: ['purchase', 'inheritance', 'direct_grant'],
         required: true
+    },
+    portionType: {
+        type: String,
+        enum: ['full', 'sub'],
+        default: 'full'
+    },
+    surfaceArea: {
+        type: Number // Required if portionType is 'sub'
     },
     documents: [{
         name: String,

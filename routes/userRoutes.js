@@ -7,7 +7,7 @@ const { protect, restrictTo } = require('../middleware/authMiddleware');
 router.use(protect);
 
 router.get('/me', userController.getMe);
-router.patch('/update-me', userController.updateMe);
+router.patch("/update-me", require("../utils/upload").single("profilePic"), userController.updateMe);
 router.patch('/update-password', userController.updatePassword);
 
 // Admin only routes

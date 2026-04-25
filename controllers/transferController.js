@@ -1,25 +1,24 @@
 const TransferRequest = require('../models/TransferRequest');
 const LandPlot = require('../models/LandPlot');
+const User = require('../models/User');
 
 exports.initiateTransfer = async (req, res) => {
     try {
-        const { plotId, receiverId, notaryId, transferType, documents } = req.body;
+        const { plotId, receiverId, notaryId, transferType, documents, portionType, surfaceArea } = req.body;
 
         const plot = await LandPlot.findById(plotId);
         if (!plot) {
             return res.status(404).json({ success: false, message: 'Land plot not found' });
         }
 
-        if (plot.status !== 'cleared') {
-            return res.status(400).json({ success: false, message: `Cannot initiate transfer. Plot status is ${plot.status}, but must be 'cleared'.` });
-        }
-
         const transferRequest = await TransferRequest.create({
             plot: plotId,
             sender: req.user.id,
-            receiver: receiverId,
+            receiver: receiverId || req.user.id, // For Direct Grant, receiver is the initiator
             notary: notaryId,
             transferType,
+            portionType: portionType || 'full',
+            surfaceArea: surfaceArea || plot.area,
             documents,
             status: 'Initiated'
         });
@@ -83,8 +82,30 @@ exports.updateTransferStatus = async (req, res) => {
         // If completed, update land ownership
         if (status === 'Completed') {
             const plot = await LandPlot.findById(transfer.plot);
+            const receiver = await User.findById(transfer.receiver);
+            
+            const parts = plot.landCode.split('-');
+            let typeCode = parts[0];
+            const regionCode = parts[1];
+            let ownerId = receiver.cniNumber ? receiver.cniNumber.slice(-5).padStart(5, '0') : '00000';
+            let plotNum = parts[3] || '000';
+
+            // Logic for Direct Grant
+            if (transfer.transferType === 'direct_grant') {
+                typeCode = '10005'; // Change to Private
+            }
+
+            // Logic for Sub Portion
+            if (transfer.portionType === 'sub') {
+                // Generate a new plot number (random 4 digits for now)
+                plotNum = Math.floor(1000 + Math.random() * 9000).toString();
+                plot.area = transfer.surfaceArea; // Update area if it's a sub portion
+            }
+
+            plot.landCode = `${typeCode}-${regionCode}-${ownerId}-${plotNum}`;
+            plot.landType = typeCode;
             plot.owner = transfer.receiver;
-            plot.status = 'Sold';
+            plot.status = 'cleared'; // Reset to cleared for the new owner
             await plot.save();
         }
 
