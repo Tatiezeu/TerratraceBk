@@ -18,8 +18,7 @@ const transferRequestSchema = new mongoose.Schema({
     },
     notary: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-        required: true
+        ref: 'User'
     },
     lro: {
         type: mongoose.Schema.Types.ObjectId,
@@ -44,6 +43,14 @@ const transferRequestSchema = new mongoose.Schema({
         type: String,
         enum: ['purchase', 'inheritance', 'direct_grant'],
         required: true
+    },
+    isSubdivision: {
+        type: Boolean,
+        default: false
+    },
+    transferArea: {
+        type: Number,
+        min: [1, 'Transfer area must be at least 1m2']
     },
     // Client uploaded documents
     clientDocuments: [String],

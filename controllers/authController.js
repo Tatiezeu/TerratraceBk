@@ -117,14 +117,15 @@ exports.login = async (req, res) => {
             return res.status(401).json({ success: false, message: 'Incorrect email or password' });
         }
 
-        // Check if account is locked
-        if (user.lockUntil && user.lockUntil > Date.now()) {
-            const remainingMinutes = Math.ceil((user.lockUntil - Date.now()) / (60 * 1000));
+        // Check if account is suspended
+        if (user.status === 'suspended') {
             return res.status(401).json({ 
                 success: false, 
-                message: `Account is locked. Try again in ${remainingMinutes} minutes.` 
+                message: 'Your account has been suspended. Please contact the administrator.' 
             });
         }
+
+        // Check if account is locked
 
         // Check password
         const isMatch = await user.comparePassword(password, user.password);
@@ -203,6 +204,49 @@ exports.login = async (req, res) => {
         await user.save();
 
         createSendToken(user, 200, res);
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+exports.resendCode = async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email is required' });
+        }
+
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        // Generate new code
+        const verificationCode = generateVerificationCode();
+        const verificationCodeExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+        user.verificationCode = verificationCode;
+        user.verificationCodeExpires = verificationCodeExpires;
+        await user.save();
+
+        // Send email
+        try {
+            await sendEmail({
+                email: user.email,
+                subject: 'TerraTrace - New Verification Code',
+                message: `Your new verification code is: ${verificationCode}`,
+                html: verificationEmail(verificationCode)
+            });
+        } catch (err) {
+            console.error('Email resending failed:', err);
+            return res.status(500).json({ success: false, message: 'Failed to send email' });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: 'New verification code sent to your email'
+        });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }

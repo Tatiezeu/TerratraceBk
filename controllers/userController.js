@@ -25,22 +25,35 @@ exports.updateMe = async (req, res) => {
             });
         }
 
-        // Filter out fields that shouldn't be updated directly
-        const filteredBody = {};
-        const allowedFields = ['firstName', 'lastName', 'phone'];
-        allowedFields.forEach(el => {
-            if (req.body[el]) filteredBody[el] = req.body[el];
-        });
+        const Jimp = require('jimp');
+        const user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
-        // Handle profile picture upload
+        // Update fields if provided
+        if (req.body.firstName) user.firstName = req.body.firstName;
+        if (req.body.lastName) user.lastName = req.body.lastName;
+        if (req.body.phone) user.phone = req.body.phone;
+
+        // Handle profile picture with Jimp for stability
         if (req.file) {
-            filteredBody.profilePic = `/uploads/${req.file.filename}`;
+            try {
+                const image = await Jimp.read(req.file.path);
+                const processedFilename = `processed-${Date.now()}-${req.file.filename}.png`;
+                const processedPath = `uploads/${processedFilename}`;
+                
+                await image
+                    .cover(400, 400) // Slightly higher res for premium look
+                    .quality(90)
+                    .writeAsync(processedPath);
+                
+                user.profilePic = `/${processedPath}`;
+            } catch (imageError) {
+                console.error('Image processing failed:', imageError);
+                user.profilePic = `/uploads/${req.file.filename}`;
+            }
         }
 
-        const updatedUser = await User.findByIdAndUpdate(req.user.id, filteredBody, {
-            new: true,
-            runValidators: true
-        });
+        const updatedUser = await user.save({ validateBeforeSave: false });
 
         res.status(200).json({
             success: true,

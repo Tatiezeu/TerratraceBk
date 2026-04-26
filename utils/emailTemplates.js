@@ -3,75 +3,122 @@ exports.verificationEmail = (code) => `
 <html>
 <head>
     <style>
-        .card {
+        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700&family=Inter:wght@400;600&display=swap');
+        
+        .container {
             max-width: 400px;
-            margin: 0 auto;
-            padding: 40px;
-            background: #ffffff;
-            border-radius: 24px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.05);
-            text-align: center;
-            font-family: 'Syne', sans-serif;
-            border: 1px solid #f0f0f0;
+            margin: 20px auto;
+            background-color: #ffffff;
+            border-radius: 28px;
+            overflow: hidden;
+            box-shadow: 0 20px 50px rgba(0, 33, 71, 0.1);
+            font-family: 'Inter', sans-serif;
+            border: 1px solid #eef2f6;
         }
         .header {
-            margin-bottom: 30px;
+            background: #002147;
+            padding: 30px 20px;
+            text-align: center;
+        }
+        .logo-box {
+            display: inline-block;
+            padding: 12px;
+            background: #ffffff;
+            border-radius: 18px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+            margin-bottom: 15px;
+            border: 2px solid #D4AF37;
         }
         .logo {
-            height: 40px;
-            margin-bottom: 10px;
+            height: 50px;
+            width: 50px;
+            display: block;
         }
-        h2 {
-            color: #002147;
-            font-size: 24px;
-            margin-bottom: 10px;
-        }
-        p {
-            color: #64748b;
-            font-size: 14px;
-            line-height: 1.6;
-        }
-        .code-container {
-            margin: 30px 0;
-            padding: 20px;
-            background: #f8fafc;
-            border-radius: 16px;
-            border: 2px dashed #e2e8f0;
-        }
-        .code {
-            font-size: 32px;
-            font-weight: 800;
-            letter-spacing: 12px;
-            color: #10b981;
+        .header h1 {
+            color: #ffffff;
+            font-family: 'Syne', sans-serif;
+            font-size: 18px;
             margin: 0;
+            letter-spacing: 2px;
+            text-transform: uppercase;
         }
-        .footer {
-            margin-top: 30px;
-            font-size: 11px;
-            color: #94a3b8;
+        .content {
+            padding: 35px 30px;
+            text-align: center;
+        }
+        .content h2 {
+            color: #002147;
+            font-family: 'Syne', sans-serif;
+            font-size: 18px;
+            margin-bottom: 20px;
             text-transform: uppercase;
             letter-spacing: 1px;
         }
+        .code-box {
+            background: linear-gradient(135deg, #D4AF37 0%, #B8860B 100%);
+            padding: 20px;
+            border-radius: 20px;
+            margin: 20px 0;
+            box-shadow: 0 10px 25px rgba(212, 175, 55, 0.2);
+        }
+        .code {
+            font-family: 'Syne', sans-serif;
+            font-size: 48px;
+            font-weight: 800;
+            color: #ffffff;
+            margin: 0;
+            letter-spacing: 8px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .footer {
+            padding: 20px;
+            text-align: center;
+            background: #f8fafc;
+            border-top: 1px solid #f1f5f9;
+        }
+        .footer p {
+            color: #64748b;
+            font-size: 11px;
+            font-weight: 600;
+            margin: 0;
+        }
+        .expire-msg {
+            color: #ef4444;
+            font-size: 12px;
+            font-weight: 700;
+            margin-top: 15px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
     </style>
 </head>
-<body style="background-color: #f1f5f9; padding: 40px 0;">
-    <div class="card">
+<body style="background-color: #f4f7fa; padding: 20px;">
+    <div class="container">
         <div class="header">
-            <img src="cid:logo" alt="TerraTrace Logo" class="logo">
-            <h2>Secure Verification</h2>
-            <p>Use the code below to verify your identity on the TerraTrace Portal.</p>
+            <div class="logo-box">
+                <img src="cid:logo" alt="TerraTrace" class="logo">
+            </div>
+            <h1>TERRATRACE</h1>
         </div>
         
-        <div class="code-container">
-            <h1 class="code">${code}</h1>
+        <div class="content">
+            <h2>Verification Code</h2>
+            <p style="color: #64748b; font-size: 14px; margin-bottom: 20px;">Enter the secure code below to complete your authentication.</p>
+            
+            <div class="code-box">
+                <h1 class="code">${code}</h1>
+            </div>
+            
+            <p class="expire-msg">This code expires in 10 minutes</p>
         </div>
-        
-        <p>This code will expire in 10 minutes. If you did not request this, please ignore this email.</p>
         
         <div class="footer">
-            Secured by TerraTrace Protocol
+            <p>Republic of Cameroon - National Land Registry</p>
         </div>
     </div>
 </body>
 </html>
 `;
+
+
+

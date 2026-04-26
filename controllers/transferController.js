@@ -5,33 +5,62 @@ const Notification = require('../models/Notification');
 
 exports.initiateTransfer = async (req, res) => {
     try {
-        const { plotId, receiverId, notaryId, transferType, clientDocuments } = req.body;
+        const { plotId, receiverId, notaryId, transferType, clientDocuments, isSubdivision, transferArea } = req.body;
+        const subdivision = isSubdivision === 'true' || isSubdivision === true;
 
         const plot = await LandPlot.findById(plotId);
         if (!plot) return res.status(404).json({ success: false, message: 'Land plot not found' });
+
+        if (subdivision && transferArea >= plot.area) {
+            return res.status(400).json({ success: false, message: 'Subdivision area must be strictly less than total area' });
+        }
+
+        const isDirectGrant = transferType === 'direct_grant';
+        
+        // For direct grant, we find an LRO to assign to
+        let assignedLro = null;
+        if (isDirectGrant) {
+            const lroUser = await User.findOne({ role: 'LRO' });
+            assignedLro = lroUser ? lroUser._id : null;
+        }
 
         const transferRequest = await TransferRequest.create({
             plot: plotId,
             sender: req.user.id,
             receiver: receiverId || req.user.id, 
-            notary: notaryId,
+            notary: isDirectGrant ? undefined : notaryId,
+            lro: assignedLro,
             transferType,
+            isSubdivision: subdivision,
+            transferArea: subdivision ? transferArea : plot.area,
             clientDocuments: clientDocuments || [],
-            status: 'Initiated'
+            status: isDirectGrant ? 'Forwarded_to_LRO' : 'Initiated'
         });
 
         plot.status = 'under_review';
         await plot.save();
 
-        // Notify Notary
-        await Notification.create({
-            recipient: notaryId,
-            sender: req.user.id,
-            type: 'system',
-            title: 'New Transfer Request',
-            message: `A new ${transferType} request for plot ${plot.landCode} has been assigned to you.`,
-            relatedPlot: plotId
-        });
+        if (isDirectGrant && assignedLro) {
+            // Notify LRO directly
+            await Notification.create({
+                recipient: assignedLro,
+                sender: req.user.id,
+                type: 'system',
+                title: 'New Direct Grant Application',
+                message: `A new direct grant application for plot ${plot.landCode} has been submitted directly for your review.`,
+                relatedPlot: plotId
+            });
+        } else if (notaryId) {
+            // Notify Notary
+            await Notification.create({
+                recipient: notaryId,
+                sender: req.user.id,
+                type: 'system',
+                title: 'New Transfer Request',
+                message: `A new ${transferType} request for plot ${plot.landCode} has been assigned to you.`,
+                relatedPlot: plotId
+            });
+        }
 
         res.status(201).json({ success: true, data: transferRequest });
     } catch (err) {
@@ -121,8 +150,8 @@ exports.updateTransferStatus = async (req, res) => {
                 endDate: endDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Default 30 days
                 isActive: true
             };
-            // Notify all participants
-            const pids = [transfer.sender._id, transfer.receiver._id, transfer.notary];
+            // Notify all participants (filter out undefined notary for direct grants)
+            const pids = [transfer.sender?._id, transfer.receiver?._id, transfer.notary].filter(Boolean);
             for (const pid of pids) {
                 await Notification.create({
                     recipient: pid,
@@ -143,30 +172,71 @@ exports.updateTransferStatus = async (req, res) => {
 
             const plot = await LandPlot.findById(transfer.plot._id);
             const buyer = transfer.receiver;
-            const seller = transfer.sender;
 
-            // Update History
-            plot.ownershipHistory.push({
-                owner: plot.owner,
-                acquiredDate: plot.lastTransferDate || plot.createdAt,
-                transferDate: Date.now(),
-                transferType: transfer.transferType,
-                previousLandCode: plot.landCode
-            });
+            if (transfer.isSubdivision) {
+                // --- SUBDIVISION LOGIC ---
+                const transferredArea = parseFloat(transfer.transferArea);
+                const remainingArea = plot.area - transferredArea;
 
-            // Generate New Land Code
-            // User requested: "land code generated becomes a public land with owner id 00000"
-            const typeCode = plot.landType || "10005";
-            const regionCode = plot.regionCode || "01";
-            const ownerIdSegment = "00000"; // State land identifier as requested
-            
-            plot.landCode = `${typeCode}-${regionCode}-${ownerIdSegment}-${plot.plotNumber || '000'}`;
-            plot.owner = buyer._id;
-            plot.status = 'transferred';
-            plot.lastTransferDate = Date.now();
-            await plot.save();
+                // 1. Create NEW plot for the buyer
+                const isStateBuyer = buyer.role === 'SuperAdmin';
+                const buyerCni = buyer.cniNumber || '000000000';
+                const cniSegment = isStateBuyer ? '00000' : buyerCni.slice(-5);
+                const typeCode = isStateBuyer ? "00050" : (transfer.transferType === 'direct_grant' ? "10005" : (plot.landType || "10005"));
+                const regionCode = plot.regionCode || "01";
+                
+                await LandPlot.create({
+                    landCode: `${typeCode}-${regionCode}-${cniSegment}-${plot.plotNumber || '000'}-P${Date.now().toString().slice(-4)}`,
+                    owner: buyer._id,
+                    landType: typeCode,
+                    regionCode: plot.regionCode,
+                    plotNumber: `${plot.plotNumber}-P`,
+                    location: plot.location,
+                    price: (plot.price / plot.area) * transferredArea,
+                    area: transferredArea,
+                    coordinates: plot.coordinates,
+                    coverImage: plot.coverImage,
+                    status: 'transferred',
+                    lastTransferDate: Date.now(),
+                    ownershipHistory: [{
+                        owner: plot.owner,
+                        acquiredDate: plot.lastTransferDate || plot.createdAt,
+                        transferDate: Date.now(),
+                        transferType: transfer.transferType,
+                        previousLandCode: plot.landCode
+                    }]
+                });
 
-            const participants = [transfer.sender._id, transfer.receiver._id, transfer.notary];
+                // 2. Update ORIGINAL plot area for the seller
+                plot.area = remainingArea;
+                plot.status = 'cleared';
+                plot.price = (plot.price / plot.area) * remainingArea;
+                await plot.save();
+            } else {
+                // --- FULL TRANSFER LOGIC ---
+                plot.ownershipHistory.push({
+                    owner: plot.owner,
+                    acquiredDate: plot.lastTransferDate || plot.createdAt,
+                    transferDate: Date.now(),
+                    transferType: transfer.transferType,
+                    previousLandCode: plot.landCode
+                });
+
+                const isStateBuyer = buyer.role === 'SuperAdmin';
+                const buyerCni = buyer.cniNumber || '000000000';
+                const cniSegment = isStateBuyer ? '00000' : buyerCni.slice(-5);
+                const typeCode = isStateBuyer ? "00050" : (transfer.transferType === 'direct_grant' ? "10005" : (plot.landType || "10005"));
+                const regionCode = plot.regionCode || "01";
+                
+                plot.landCode = `${typeCode}-${regionCode}-${cniSegment}-${plot.plotNumber || '000'}`;
+                plot.landType = typeCode; 
+                plot.owner = buyer._id;
+                plot.status = 'transferred';
+                plot.lastTransferDate = Date.now();
+                await plot.save();
+            }
+
+            const participants = [transfer.sender?._id || transfer.sender, transfer.receiver?._id || transfer.receiver, transfer.notary].filter(Boolean);
             for (const pid of participants) {
                 await Notification.create({
                     recipient: pid,
@@ -212,15 +282,18 @@ exports.fileObjection = async (req, res) => {
 
         await transfer.save();
 
-        // Notify LRO
-        await Notification.create({
-            recipient: transfer.lro?._id,
-            sender: req.user.id,
-            type: 'system',
-            title: 'New Objection Filed',
-            message: `A formal objection has been filed against the transfer of plot ${transfer.plot.landCode}.`,
-            relatedPlot: transfer.plot._id
-        });
+        // Notify relevant participants
+        const participants = [transfer.sender, transfer.receiver, transfer.lro?._id].filter(Boolean);
+        for (const pid of participants) {
+            await Notification.create({
+                recipient: pid,
+                sender: req.user.id,
+                type: 'system',
+                title: 'New Objection Filed',
+                message: `A formal objection has been filed against the transfer of plot ${transfer.plot.landCode}. The process is now subject to administrative review.`,
+                relatedPlot: transfer.plot._id
+            });
+        }
 
         res.status(200).json({ success: true, message: 'Objection filed successfully' });
     } catch (err) {

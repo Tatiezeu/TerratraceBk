@@ -5,24 +5,26 @@ exports.sendUnblockRequest = async (req, res) => {
     try {
         const { plotId, plotCode } = req.body;
         
-        const superAdmin = await User.findOne({ role: 'SuperAdmin' });
-        if (!superAdmin) {
-            return res.status(404).json({ success: false, message: 'SuperAdmin not found' });
+        const admins = await User.find({ role: { $in: ['SuperAdmin', 'Admin'] } });
+        if (admins.length === 0) {
+            return res.status(404).json({ success: false, message: 'No administrators found' });
         }
 
-        const notification = await Notification.create({
-            recipient: superAdmin._id,
-            sender: req.user.id,
-            type: 'unblock_request',
-            title: 'Land Unblock Request',
-            message: `Owner ${req.user.firstName} ${req.user.lastName} has requested to unblock land plot: ${plotCode}`,
-            relatedPlot: plotId
-        });
+        const notifications = await Promise.all(admins.map(admin => 
+            Notification.create({
+                recipient: admin._id,
+                sender: req.user.id,
+                type: 'unblock_request',
+                title: 'Land Unblock Request',
+                message: `Owner ${req.user.firstName} ${req.user.lastName} has requested to unblock land plot: ${plotCode}`,
+                relatedPlot: plotId
+            })
+        ));
 
         res.status(201).json({
             success: true,
-            message: 'Unblock request sent to Super Admin',
-            data: notification
+            message: 'Unblock request sent to all Administrators',
+            data: notifications[0]
         });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
