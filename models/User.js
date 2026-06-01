@@ -61,6 +61,14 @@ const userSchema = new mongoose.Schema({
         type: Date,
         select: false
     },
+    activationToken: {
+        type: String,
+        select: false
+    },
+    activationTokenExpires: {
+        type: Date,
+        select: false
+    },
     // Security tracking
     loginAttempts: {
         type: Number,
@@ -76,7 +84,7 @@ const userSchema = new mongoose.Schema({
     status: {
         type: String,
         enum: ['active', 'suspended', 'pending'],
-        default: 'active'
+        default: 'pending'
     },
     matricule: {
         type: String,
@@ -101,6 +109,8 @@ userSchema.pre('save', async function(next) {
 userSchema.methods.comparePassword = async function(candidatePassword, userPassword) {
     return await bcrypt.compare(candidatePassword, userPassword);
 };
+
+userSchema.index({ role: 1 });
 
 const User = mongoose.model('User', userSchema);
 module.exports = User;

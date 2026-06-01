@@ -1,10 +1,13 @@
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
+const sharp = require('sharp');
+const path = require('path');
+const fs = require('fs');
 
 // Get current user profile
 exports.getMe = async (req, res) => {
     try {
-        const user = await User.findById(req.user.id);
+        const user = await User.findById(req.user.id).lean();
         res.status(200).json({
             success: true,
             data: user
@@ -25,7 +28,6 @@ exports.updateMe = async (req, res) => {
             });
         }
 
-        const Jimp = require('jimp');
         const user = await User.findById(req.user.id);
         if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
@@ -33,31 +35,39 @@ exports.updateMe = async (req, res) => {
         if (req.body.firstName) user.firstName = req.body.firstName;
         if (req.body.lastName) user.lastName = req.body.lastName;
         if (req.body.phone) user.phone = req.body.phone;
+        if (req.body.profilePic) user.profilePic = req.body.profilePic;
 
-        // Handle profile picture with Jimp for stability
+        // Handle profile picture with sharp (fast, native image processing)
         if (req.file) {
             try {
-                const image = await Jimp.read(req.file.path);
-                const processedFilename = `processed-${Date.now()}-${req.file.filename}.png`;
-                const processedPath = `uploads/${processedFilename}`;
-                
-                await image
-                    .cover(400, 400) // Slightly higher res for premium look
-                    .quality(90)
-                    .writeAsync(processedPath);
-                
-                user.profilePic = `/${processedPath}`;
+                const buffer = await sharp(req.file.path)
+                    .resize(400, 400, { fit: 'cover', position: 'centre' })
+                    .webp({ quality: 85 })
+                    .toBuffer();
+
+                user.profilePic = `data:image/webp;base64,${buffer.toString('base64')}`;
+
+                // Remove the original uploaded file to save space
+                fs.unlink(req.file.path, () => {});
             } catch (imageError) {
-                console.error('Image processing failed:', imageError);
-                user.profilePic = `/uploads/${req.file.filename}`;
+                console.error('Sharp image processing failed:', imageError);
+                try {
+                    const rawBuffer = fs.readFileSync(req.file.path);
+                    user.profilePic = `data:${req.file.mimetype};base64,${rawBuffer.toString('base64')}`;
+                    fs.unlink(req.file.path, () => {});
+                } catch (fallbackError) {
+                    console.error('Fallback image base64 conversion failed:', fallbackError);
+                }
             }
         }
 
         const updatedUser = await user.save({ validateBeforeSave: false });
 
+        // Return plain object with all user data so the frontend
+        // can immediately update the navbar and profile page
         res.status(200).json({
             success: true,
-            data: updatedUser
+            data: updatedUser.toObject()
         });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });

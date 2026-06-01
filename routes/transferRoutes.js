@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const transferController = require('../controllers/transferController');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, restrictTo } = require('../middleware/authMiddleware');
 const upload = require('../utils/upload');
 
 router.use(protect);
@@ -14,16 +14,21 @@ router.post('/initiate', upload.array('attachments', 10), (req, res, next) => {
     next();
 }, transferController.initiateTransfer);
 
+// Specific routes MUST come before /:id to avoid conflicts
 router.get('/my-transfers', transferController.getMyTransfers);
 router.get('/public-notices', transferController.getPublicNotices);
+router.delete('/public-notices', restrictTo('SuperAdmin'), transferController.clearAllPublicNotices);
+router.patch('/plot/:plotId/dispute', transferController.updatePlotDispute);
+router.post('/plot/:plotId/undispute', transferController.sendUndisputeRequest);
+
+// Transfer detail routes
+router.get('/:id/progress', transferController.getTransferProgress); // Real-time tracker
 router.get('/:id', transferController.getTransferDetails);
 
 router.patch('/:id/status', upload.fields([
     { name: 'attachments', maxCount: 10 }, 
     { name: 'receipt', maxCount: 1 }      
 ]), (req, res, next) => {
-    // Logic: If status is Awaiting_Fee_Payment, attachments are buyerDocuments (drafts)
-    // Logic: If status is Payment_Verified, attachments are certifiedDocuments (final)
     if (req.files && req.files.attachments) {
         const filePaths = req.files.attachments.map(f => `/uploads/${f.filename}`);
         if (req.body.status === 'Awaiting_Fee_Payment') {
@@ -31,11 +36,9 @@ router.patch('/:id/status', upload.fields([
         } else if (req.body.status === 'Payment_Verified') {
             req.body.certifiedDocuments = filePaths;
         } else {
-            // General attachments
             req.body.buyerDocuments = filePaths;
         }
     }
-    // Handle payment receipt upload from Client
     if (req.files && req.files.receipt) {
         req.body.paymentReceipt = `/uploads/${req.files.receipt[0].filename}`;
     }
@@ -43,7 +46,15 @@ router.patch('/:id/status', upload.fields([
 }, transferController.updateTransferStatus);
 
 router.post('/:id/objection', transferController.fileObjection);
-router.patch('/plot/:plotId/dispute', transferController.updatePlotDispute);
-router.post('/plot/:plotId/undispute', transferController.sendUndisputeRequest);
+
+// Document management
+router.patch('/:id/update-documents', upload.array('attachments', 10), (req, res, next) => {
+    if (req.files && req.files.length > 0) {
+        req.body.documents = req.files.map(f => `/uploads/${f.filename}`);
+    }
+    next();
+}, transferController.updateDocuments);
+
+router.delete('/:id/document', transferController.deleteDocument);
 
 module.exports = router;

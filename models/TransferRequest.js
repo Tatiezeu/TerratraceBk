@@ -35,7 +35,8 @@ const transferRequestSchema = new mongoose.Schema({
             'Forwarded_to_LRO', 
             'Public_Notice',
             'Completed', 
-            'Rejected'
+            'Rejected',
+            'Cancelled'
         ],
         default: 'Initiated'
     },
@@ -98,6 +99,13 @@ const transferRequestSchema = new mongoose.Schema({
 }, {
     timestamps: true
 });
+
+transferRequestSchema.index({ sender: 1 });
+transferRequestSchema.index({ receiver: 1 });
+transferRequestSchema.index({ notary: 1 });
+transferRequestSchema.index({ lro: 1 });
+transferRequestSchema.index({ plot: 1 });
+transferRequestSchema.index({ status: 1 });
 
 const TransferRequest = mongoose.model('TransferRequest', transferRequestSchema);
 module.exports = TransferRequest;

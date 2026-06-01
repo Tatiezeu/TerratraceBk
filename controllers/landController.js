@@ -4,11 +4,13 @@ const { generateLandCode } = require('../utils/algorithm');
 
 exports.registerLandAndOwner = async (req, res) => {
     try {
-        const { 
+        let { 
             landType, regionCode, plotNumber, location, price, area, coordinates, description, matterportId,
             ownerFirstName, ownerLastName, ownerEmail, ownerPhone, ownerCNI, ownerPassword, status,
             ownerId
         } = req.body;
+
+        if (ownerCNI === "") ownerCNI = undefined;
 
         // 1) Create or find user
         let user;
@@ -117,7 +119,7 @@ exports.createLandPlot = async (req, res) => {
 
 exports.getAllPlots = async (req, res) => {
     try {
-        const plots = await LandPlot.find().populate('owner', 'firstName lastName').populate('ownershipHistory.owner', 'firstName lastName');
+        const plots = await LandPlot.find().populate('owner', 'firstName lastName').populate('ownershipHistory.owner', 'firstName lastName').lean();
         res.status(200).json({
             success: true,
             count: plots.length,
@@ -140,7 +142,7 @@ exports.getMyPlots = async (req, res) => {
         if (req.user.role === 'SuperAdmin') {
             query = { $or: [{ owner: req.user.id }, { landType: '00050' }, { _id: { $in: transferPlotIds } }] };
         }
-        const plots = await LandPlot.find(query).populate('owner', 'firstName lastName').populate('ownershipHistory.owner', 'firstName lastName');
+        const plots = await LandPlot.find(query).populate('owner', 'firstName lastName').populate('ownershipHistory.owner', 'firstName lastName').lean();
         res.status(200).json({ success: true, count: plots.length, data: plots });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
@@ -149,7 +151,7 @@ exports.getMyPlots = async (req, res) => {
 
 exports.getPlotByCode = async (req, res) => {
     try {
-        const plot = await LandPlot.findOne({ landCode: req.params.code }).populate('owner', 'firstName lastName').populate('ownershipHistory.owner', 'firstName lastName');
+        const plot = await LandPlot.findOne({ landCode: req.params.code }).populate('owner', 'firstName lastName').populate('ownershipHistory.owner', 'firstName lastName').lean();
         if (!plot) {
             return res.status(404).json({ success: false, message: 'Land plot not found' });
         }

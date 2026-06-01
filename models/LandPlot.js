@@ -87,5 +87,8 @@ const landPlotSchema = new mongoose.Schema({
     timestamps: true
 });
 
+landPlotSchema.index({ owner: 1 });
+landPlotSchema.index({ status: 1 });
+
 const LandPlot = mongoose.model('LandPlot', landPlotSchema);
 module.exports = LandPlot;

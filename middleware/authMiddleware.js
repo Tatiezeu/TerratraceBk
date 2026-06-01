@@ -23,6 +23,16 @@ exports.protect = async (req, res, next) => {
             return res.status(401).json({ success: false, message: 'User belonging to this token no longer exists' });
         }
 
+        // Check if user is suspended
+        if (currentUser.status === 'suspended') {
+            return res.status(401).json({ success: false, message: 'Your account has been suspended' });
+        }
+
+        // Check if user is inactive / pending verification
+        if (currentUser.status === 'pending' || !currentUser.isVerified) {
+            return res.status(401).json({ success: false, message: 'Your account is inactive' });
+        }
+
         // Grant access
         req.user = currentUser;
         next();

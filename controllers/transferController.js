@@ -11,6 +11,18 @@ exports.initiateTransfer = async (req, res) => {
         const plot = await LandPlot.findById(plotId);
         if (!plot) return res.status(404).json({ success: false, message: 'Land plot not found' });
 
+        // Check for ANY existing pending transfer requests for this plot
+        const existingTransfer = await TransferRequest.findOne({ 
+            plot: plotId, 
+            status: { $nin: ['Completed', 'Rejected', 'Cancelled'] } 
+        });
+        if (existingTransfer) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'A transfer request is already in progress for this land plot. You cannot initiate another one until the current one is resolved.' 
+            });
+        }
+
         if (subdivision && transferArea >= plot.area) {
             return res.status(400).json({ success: false, message: 'Subdivision area must be strictly less than total area' });
         }
@@ -71,14 +83,103 @@ exports.initiateTransfer = async (req, res) => {
 exports.getTransferDetails = async (req, res) => {
     try {
         const transfer = await TransferRequest.findById(req.params.id)
-            .populate('plot')
-            .populate('sender', 'firstName lastName email')
-            .populate('receiver', 'firstName lastName email')
-            .populate('notary', 'firstName lastName email')
-            .populate('lro', 'firstName lastName email');
+            .populate('plot', 'landCode location area status coverImage plotNumber regionCode')
+            .populate('sender', 'firstName lastName email profilePic')
+            .populate('receiver', 'firstName lastName email profilePic')
+            .populate('notary', 'firstName lastName email profilePic')
+            .populate('lro', 'firstName lastName email profilePic')
+            .lean();
 
         if (!transfer) return res.status(404).json({ success: false, message: 'Transfer request not found' });
         res.status(200).json({ success: true, data: transfer });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+// Real-time progress tracker — returns structured stage data for the frontend tracker UI
+exports.getTransferProgress = async (req, res) => {
+    try {
+        const transfer = await TransferRequest.findById(req.params.id)
+            .populate('plot', 'landCode location area status')
+            .populate('sender', 'firstName lastName email')
+            .populate('receiver', 'firstName lastName email')
+            .populate('notary', 'firstName lastName email')
+            .populate('lro', 'firstName lastName email')
+            .lean();
+
+        if (!transfer) return res.status(404).json({ success: false, message: 'Transfer not found' });
+
+        // Define ordered stages based on transfer type
+        const isDirectGrant = transfer.transferType === 'direct_grant';
+        const allStages = isDirectGrant
+            ? [
+                { key: 'Initiated',          label: 'Request Initiated',        icon: 'file-text' },
+                { key: 'Forwarded_to_LRO',   label: 'Forwarded to LRO',         icon: 'send' },
+                { key: 'Public_Notice',      label: 'Public Notice Published',   icon: 'megaphone' },
+                { key: 'Completed',          label: 'Transfer Completed',        icon: 'check-circle' },
+            ]
+            : [
+                { key: 'Initiated',           label: 'Request Initiated',         icon: 'file-text' },
+                { key: 'Under_Verification',  label: 'Under Notary Verification', icon: 'search' },
+                { key: 'Awaiting_Fee_Payment',label: 'Fee Payment Required',      icon: 'credit-card' },
+                { key: 'Payment_Submitted',   label: 'Payment Receipt Submitted', icon: 'upload' },
+                { key: 'Payment_Verified',    label: 'Payment Verified',          icon: 'badge-check' },
+                { key: 'Forwarded_to_LRO',   label: 'Forwarded to LRO',          icon: 'send' },
+                { key: 'Public_Notice',      label: 'Public Notice Published',    icon: 'megaphone' },
+                { key: 'Completed',          label: 'Transfer Completed',         icon: 'check-circle' },
+            ];
+
+        const currentStatusIndex = allStages.findIndex(s => s.key === transfer.status);
+        const isRejectedOrCancelled = ['Rejected', 'Cancelled'].includes(transfer.status);
+
+        const stages = allStages.map((stage, i) => {
+            let stageStatus = 'pending';
+            if (isRejectedOrCancelled && i <= currentStatusIndex) {
+                stageStatus = i < currentStatusIndex ? 'completed' : 'failed';
+            } else if (i < currentStatusIndex) {
+                stageStatus = 'completed';
+            } else if (i === currentStatusIndex) {
+                stageStatus = 'active';
+            }
+
+            // Find the history entry for this stage
+            const historyEntry = transfer.history
+                ? [...transfer.history].reverse().find(h => h.status === stage.key)
+                : null;
+
+            return {
+                ...stage,
+                status: stageStatus,
+                completedAt: historyEntry?.timestamp || null,
+                comment: historyEntry?.comment || null,
+            };
+        });
+
+        res.status(200).json({
+            success: true,
+            data: {
+                transferId: transfer._id,
+                currentStatus: transfer.status,
+                isCompleted: transfer.status === 'Completed',
+                isRejected: isRejectedOrCancelled,
+                transferType: transfer.transferType,
+                plot: transfer.plot,
+                sender: transfer.sender,
+                receiver: transfer.receiver,
+                notary: transfer.notary,
+                lro: transfer.lro,
+                publicNotice: transfer.publicNotice,
+                feeNotice: transfer.feeNotice,
+                clientDocuments: transfer.clientDocuments || [],
+                buyerDocuments: transfer.buyerDocuments || [],
+                certifiedDocuments: transfer.certifiedDocuments || [],
+                paymentReceipt: transfer.paymentReceipt,
+                stages,
+                history: transfer.history || [],
+                objections: transfer.objections || [],
+            }
+        });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
@@ -107,7 +208,7 @@ exports.updateTransferStatus = async (req, res) => {
                 sender: req.user.id,
                 type: 'system',
                 title: 'Payment Fee Notice',
-                message: `Notary has requested payment of ${feeNotice.amount} CFA for plot ${transfer.plot.landCode}.`,
+                message: `Notary has requested payment of ${feeNotice.amount} CFA for plot ${transfer.plot.landCode}. Please note that payment should be made in cash at the level of the MINCAF.`,
                 relatedPlot: transfer.plot._id
             });
         } else if (status === 'Payment_Submitted') {
@@ -150,6 +251,14 @@ exports.updateTransferStatus = async (req, res) => {
                 endDate: endDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Default 30 days
                 isActive: true
             };
+
+            // Ensure participants are populated to get names
+            if (!transfer.sender.firstName || !transfer.receiver.firstName) {
+                await transfer.populate('sender receiver');
+            }
+            const senderName = "the Government of Cameroon";
+            const receiverName = `${transfer.receiver.firstName} ${transfer.receiver.lastName}`;
+
             // Notify all participants (filter out undefined notary for direct grants)
             const pids = [transfer.sender?._id, transfer.receiver?._id, transfer.notary].filter(Boolean);
             for (const pid of pids) {
@@ -158,7 +267,7 @@ exports.updateTransferStatus = async (req, res) => {
                     sender: req.user.id,
                     type: 'system',
                     title: 'Public Notice Published',
-                    message: `The public notice for plot ${transfer.plot.landCode} has been published and is active until ${new Date(transfer.publicNotice.endDate).toLocaleDateString()}.`,
+                    message: `The public notice for plot ${transfer.plot.landCode} located at ${transfer.plot.location} (${transfer.plot.area} sqm), being transferred from ${senderName} to ${receiverName}, has been published and is active until ${new Date(transfer.publicNotice.endDate).toLocaleDateString()}.`,
                     relatedPlot: transfer.plot._id
                 });
             }
@@ -247,6 +356,25 @@ exports.updateTransferStatus = async (req, res) => {
                     relatedPlot: plot._id
                 });
             }
+
+            // Mark all other pending transfer requests for the same plot as Cancelled
+            await TransferRequest.updateMany(
+                { 
+                    plot: plot._id, 
+                    _id: { $ne: transfer._id },
+                    status: { $nin: ['Completed', 'Rejected', 'Cancelled'] }
+                },
+                { 
+                    $set: { status: 'Cancelled' },
+                    $push: { 
+                        history: { 
+                            status: 'Cancelled', 
+                            updatedBy: req.user.id, 
+                            comment: 'Request cancelled because another transfer for this plot was completed.' 
+                        } 
+                    }
+                }
+            );
         }
 
         transfer.status = status;
@@ -367,13 +495,22 @@ exports.getMyTransfers = async (req, res) => {
         }
 
         const transfers = await TransferRequest.find(filters)
-            .populate('plot')
-            .populate('sender', 'firstName lastName email')
-            .populate('receiver', 'firstName lastName email')
-            .populate('notary', 'firstName lastName')
-            .sort('-updatedAt');
+            .populate('plot', 'landCode location area coverImage status plotNumber')
+            .populate('sender', 'firstName lastName email profilePic')
+            .populate('receiver', 'firstName lastName email profilePic')
+            .populate('notary', 'firstName lastName profilePic')
+            .sort('-updatedAt')
+            .lean();
 
-        res.status(200).json({ success: true, count: transfers.length, data: transfers });
+        // Optional: Filter to show only the most recent request per plot to avoid UI clutter from duplicates
+        const uniquePlots = new Set();
+        const filteredTransfers = transfers.filter(t => {
+            if (uniquePlots.has(t.plot._id.toString())) return false;
+            uniquePlots.add(t.plot._id.toString());
+            return true;
+        });
+
+        res.status(200).json({ success: true, count: filteredTransfers.length, data: filteredTransfers });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
@@ -385,9 +522,79 @@ exports.getPublicNotices = async (req, res) => {
             .populate('plot')
             .populate('sender', 'firstName lastName')
             .populate('lro', 'firstName lastName')
-            .sort('-updatedAt');
+            .sort('-updatedAt')
+            .lean();
 
         res.status(200).json({ success: true, data: notices });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+exports.updateDocuments = async (req, res) => {
+    try {
+        const { documents, type } = req.body; // type: 'clientDocuments' or 'buyerDocuments'
+        const transfer = await TransferRequest.findById(req.params.id);
+        
+        if (!transfer) return res.status(404).json({ success: false, message: 'Transfer request not found' });
+
+        // Authorization: Only sender can update clientDocuments, only receiver or notary can update buyerDocuments?
+        // For simplicity, let's allow it if they are part of the transfer
+        const isParticipant = [transfer.sender.toString(), transfer.receiver.toString(), transfer.notary?.toString()].includes(req.user.id);
+        if (!isParticipant && req.user.role !== 'SuperAdmin') {
+            return res.status(403).json({ success: false, message: 'Not authorized to update documents for this transfer' });
+        }
+
+        if (type === 'clientDocuments') {
+            transfer.clientDocuments = documents;
+        } else if (type === 'buyerDocuments') {
+            transfer.buyerDocuments = documents;
+        } else {
+            return res.status(400).json({ success: false, message: 'Invalid document type' });
+        }
+
+        await transfer.save();
+        res.status(200).json({ success: true, message: 'Documents updated successfully', data: transfer });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+exports.deleteDocument = async (req, res) => {
+    try {
+        const { documentUrl, type } = req.body; // type: 'clientDocuments' or 'buyerDocuments'
+        const transfer = await TransferRequest.findById(req.params.id);
+        
+        if (!transfer) return res.status(404).json({ success: false, message: 'Transfer request not found' });
+
+        const isParticipant = [transfer.sender.toString(), transfer.receiver.toString(), transfer.notary?.toString()].includes(req.user.id);
+        if (!isParticipant && req.user.role !== 'SuperAdmin') {
+            return res.status(403).json({ success: false, message: 'Not authorized' });
+        }
+
+        if (type === 'clientDocuments') {
+            transfer.clientDocuments = transfer.clientDocuments.filter(doc => doc !== documentUrl);
+        } else if (type === 'buyerDocuments') {
+            transfer.buyerDocuments = transfer.buyerDocuments.filter(doc => doc !== documentUrl);
+        } else {
+            return res.status(400).json({ success: false, message: 'Invalid document type' });
+        }
+
+        await transfer.save();
+        res.status(200).json({ success: true, message: 'Document removed successfully', data: transfer });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+exports.clearAllPublicNotices = async (req, res) => {
+    try {
+        const result = await TransferRequest.deleteMany({ status: 'Public_Notice' });
+        res.status(200).json({
+            success: true,
+            message: `Successfully cleared all public notices. Deleted ${result.deletedCount} notices.`,
+            deletedCount: result.deletedCount
+        });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }

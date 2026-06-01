@@ -6,5 +6,6 @@ router.post('/signup', authController.signup);
 router.post('/login', authController.login);
 router.post('/verify-email', authController.verifyEmail);
 router.post('/resend-code', authController.resendCode);
+router.post('/activate', authController.activateAccount);
 
 module.exports = router;

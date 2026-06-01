@@ -35,7 +35,9 @@ exports.getMyNotifications = async (req, res) => {
     try {
         const notifications = await Notification.find({ recipient: req.user.id })
             .sort({ createdAt: -1 })
-            .populate('sender', 'firstName lastName');
+            .limit(50)
+            .populate('sender', 'firstName lastName profilePic')
+            .lean();
             
         res.status(200).json({
             success: true,
@@ -50,7 +52,9 @@ exports.getMySentNotifications = async (req, res) => {
     try {
         const notifications = await Notification.find({ sender: req.user.id })
             .sort({ createdAt: -1 })
-            .populate('recipient', 'firstName lastName role');
+            .limit(50)
+            .populate('recipient', 'firstName lastName role profilePic')
+            .lean();
             
         res.status(200).json({
             success: true,
