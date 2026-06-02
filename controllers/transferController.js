@@ -286,6 +286,9 @@ exports.updateTransferStatus = async (req, res) => {
                 });
             }
         } else if (status === 'Completed') {
+            if (transfer.status === 'Rejected') {
+                return res.status(400).json({ success: false, message: 'This transfer request has been rejected.' });
+            }
             if (transfer.publicNotice?.isActive && new Date() < new Date(transfer.publicNotice.endDate)) {
                 return res.status(400).json({ success: false, message: 'Public notice period is still active.' });
             }
@@ -389,6 +392,36 @@ exports.updateTransferStatus = async (req, res) => {
                     }
                 }
             );
+        } else if (status === 'Rejected') {
+            if (transfer.plot) {
+                const plot = await LandPlot.findById(transfer.plot._id);
+                if (plot) {
+                    plot.status = 'cleared';
+                    await plot.save();
+                }
+            }
+
+            // Notify Client / Initiator
+            await Notification.create({
+                recipient: transfer.sender._id || transfer.sender,
+                sender: req.user.id,
+                type: 'system',
+                title: 'Transfer Request Rejected',
+                message: `Your transfer application for plot ${transfer.plot?.landCode} has been officially rejected by the Land Registry Officer. Reason: ${feedback || 'No reason provided.'}`,
+                relatedPlot: transfer.plot?._id
+            });
+
+            // Notify Notary Officer
+            if (transfer.notary) {
+                await Notification.create({
+                    recipient: transfer.notary,
+                    sender: req.user.id,
+                    type: 'system',
+                    title: 'Transfer Request Rejected by LRO',
+                    message: `The transfer application for plot ${transfer.plot?.landCode} has been officially rejected by the Land Registry Officer. Reason: ${feedback || 'No reason provided.'}`,
+                    relatedPlot: transfer.plot?._id
+                });
+            }
         }
 
         transfer.status = status;
@@ -509,7 +542,14 @@ exports.getMyTransfers = async (req, res) => {
         }
 
         const transfers = await TransferRequest.find(filters)
-            .populate('plot', 'landCode location area coverImage status plotNumber')
+            .populate({
+                path: 'plot',
+                select: 'landCode location area coverImage status plotNumber owner',
+                populate: {
+                    path: 'owner',
+                    select: 'firstName lastName email'
+                }
+            })
             .populate('sender', 'firstName lastName email profilePic')
             .populate('receiver', 'firstName lastName email profilePic')
             .populate('notary', 'firstName lastName profilePic')

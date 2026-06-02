@@ -33,7 +33,8 @@ exports.sendUnblockRequest = async (req, res) => {
 
 exports.getMyNotifications = async (req, res) => {
     try {
-        const notifications = await Notification.find({ recipient: req.user.id })
+        const query = req.user.role === 'SuperAdmin' ? {} : { recipient: req.user.id };
+        const notifications = await Notification.find(query)
             .sort({ createdAt: -1 })
             .limit(50)
             .populate('sender', 'firstName lastName profilePic')
