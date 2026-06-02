@@ -69,6 +69,14 @@ const userSchema = new mongoose.Schema({
         type: Date,
         select: false
     },
+    resetPasswordToken: {
+        type: String,
+        select: false
+    },
+    resetPasswordExpires: {
+        type: Date,
+        select: false
+    },
     // Security tracking
     loginAttempts: {
         type: Number,

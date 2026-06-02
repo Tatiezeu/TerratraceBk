@@ -4,7 +4,7 @@ const { generateVerificationCode } = require('../utils/algorithm');
 const bcrypt = require('bcryptjs');
 const SystemConfig = require('../models/SystemConfig');
 const sendEmail = require('../utils/email');
-const { VerificationEmailTemplate, ActivationEmailTemplate } = require('../utils/emailTemplates');
+const { VerificationEmailTemplate, ActivationEmailTemplate, ForgotPasswordEmailTemplate } = require('../utils/emailTemplates');
 const { verifyRecaptcha } = require('../utils/recaptcha');
 
 // Sign token
@@ -412,6 +412,93 @@ exports.activateAccount = async (req, res) => {
         res.status(200).json({
             success: true,
             message: 'Your account has been successfully activated!'
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+exports.forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Please provide email address' });
+        }
+
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        // Generate reset token
+        const crypto = require('crypto');
+        const rawToken = crypto.randomBytes(32).toString('hex');
+        const resetPasswordToken = crypto.createHash('sha256').update(rawToken).digest('hex');
+        const resetPasswordExpires = Date.now() + 60 * 60 * 1000; // 1 hour
+
+        user.resetPasswordToken = resetPasswordToken;
+        user.resetPasswordExpires = resetPasswordExpires;
+        await user.save({ validateBeforeSave: false });
+
+        // Build reset link point to user's IP 172.20.10.4
+        const localIp = '172.20.10.4';
+        let frontendUrl = req.headers.origin || process.env.FRONTEND_URL || `http://${localIp}:5173`;
+        if (frontendUrl.includes('localhost') || frontendUrl.includes('127.0.0.1')) {
+            frontendUrl = frontendUrl.replace('localhost', localIp).replace('127.0.0.1', localIp);
+        }
+
+        const resetLink = `${frontendUrl}/reset-password?token=${rawToken}`;
+
+        try {
+            await sendEmail({
+                email: user.email,
+                subject: 'TerraTrace - Reset Your Password',
+                message: `Please reset your password by visiting: ${resetLink}`,
+                html: ForgotPasswordEmailTemplate(resetLink, `${user.firstName} ${user.lastName}`)
+            });
+        } catch (err) {
+            console.error('Email sending failed:', err);
+            return res.status(500).json({ success: false, message: 'Failed to send password reset email' });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: 'Password reset link sent to your email'
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+exports.resetPassword = async (req, res) => {
+    try {
+        const { token, password } = req.body;
+
+        if (!token || !password) {
+            return res.status(400).json({ success: false, message: 'Token and password are required' });
+        }
+
+        const crypto = require('crypto');
+        const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+        const user = await User.findOne({
+            resetPasswordToken: hashedToken,
+            resetPasswordExpires: { $gt: Date.now() }
+        }).select('+resetPasswordToken +resetPasswordExpires');
+
+        if (!user) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired password reset token' });
+        }
+
+        // Set new password (pre-save model hook will hash it)
+        user.password = password;
+        user.resetPasswordToken = undefined;
+        user.resetPasswordExpires = undefined;
+        await user.save();
+
+        res.status(200).json({
+            success: true,
+            message: 'Password updated successfully!'
         });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });

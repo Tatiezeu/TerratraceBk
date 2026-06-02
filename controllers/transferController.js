@@ -11,17 +11,31 @@ exports.initiateTransfer = async (req, res) => {
         const plot = await LandPlot.findById(plotId);
         if (!plot) return res.status(404).json({ success: false, message: 'Land plot not found' });
 
-        // Check for ANY existing pending transfer requests for this plot
-        const existingTransfer = await TransferRequest.findOne({ 
-            plot: plotId, 
-            status: { $nin: ['Completed', 'Rejected', 'Cancelled'] } 
-        });
-        if (existingTransfer) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'A transfer request is already in progress for this land plot. You cannot initiate another one until the current one is resolved.' 
+        // If the land plot is actively under review, block new initiation
+        if (plot.status === 'under_review') {
+            return res.status(400).json({
+                success: false,
+                message: 'A transfer request is already actively in progress for this land plot under review.'
             });
         }
+
+        // Clean up any dangling pending/active requests for this plot to ensure only one active request exists
+        await TransferRequest.updateMany(
+            { 
+                plot: plotId, 
+                status: { $nin: ['Completed', 'Rejected', 'Cancelled'] } 
+            },
+            { 
+                $set: { status: 'Cancelled' },
+                $push: { 
+                    history: { 
+                        status: 'Cancelled', 
+                        updatedBy: req.user.id, 
+                        comment: 'Cancelled because a new transfer request was initiated for this plot.' 
+                    } 
+                }
+            }
+        );
 
         if (subdivision && transferArea >= plot.area) {
             return res.status(400).json({ success: false, message: 'Subdivision area must be strictly less than total area' });
@@ -208,7 +222,7 @@ exports.updateTransferStatus = async (req, res) => {
                 sender: req.user.id,
                 type: 'system',
                 title: 'Payment Fee Notice',
-                message: `Notary has requested payment of ${feeNotice.amount} CFA for plot ${transfer.plot.landCode}. Please note that payment should be made in cash at the level of the MINCAF.`,
+                message: `Notary has requested payment of ${feeNotice.amount} CFA for plot ${transfer.plot.landCode}. Please note that payment should be made in cash at the level of the MINDCAF.`,
                 relatedPlot: transfer.plot._id
             });
         } else if (status === 'Payment_Submitted') {
