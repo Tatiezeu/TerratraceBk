@@ -260,9 +260,25 @@ exports.updateTransferStatus = async (req, res) => {
             });
         } else if (status === 'Public_Notice') {
             const { startDate, endDate } = req.body.publicNotice || {};
+            let finalEndDate = endDate;
+            if (!finalEndDate) {
+                const SystemConfig = require('../models/SystemConfig');
+                const testModeConfig = await SystemConfig.findOne({ key: 'noticeTestMode' });
+                const testMinutesConfig = await SystemConfig.findOne({ key: 'noticeTestMinutes' });
+                const durationDaysConfig = await SystemConfig.findOne({ key: 'noticeDurationDays' });
+
+                const testMode = testModeConfig ? testModeConfig.value : false;
+                const testMinutes = testMinutesConfig ? testMinutesConfig.value : 10;
+                const durationDays = durationDaysConfig ? durationDaysConfig.value : 30;
+
+                const durationMs = testMode 
+                    ? testMinutes * 60 * 1000 
+                    : durationDays * 24 * 60 * 60 * 1000;
+                finalEndDate = new Date(Date.now() + durationMs);
+            }
             transfer.publicNotice = {
                 startDate: startDate || Date.now(),
-                endDate: endDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Default 30 days
+                endDate: finalEndDate,
                 isActive: true
             };
 
