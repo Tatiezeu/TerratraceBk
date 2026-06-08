@@ -378,6 +378,11 @@ exports.updateTransferStatus = async (req, res) => {
                 await plot.save();
             }
 
+            // Upgrade Client to Landowner role upon successful purchase/transfer completion
+            if (buyer && buyer.role === 'Client') {
+                await User.findByIdAndUpdate(buyer._id, { role: 'Landowner' });
+            }
+
             const participants = [transfer.sender?._id || transfer.sender, transfer.receiver?._id || transfer.receiver, transfer.notary].filter(Boolean);
             for (const pid of participants) {
                 await Notification.create({

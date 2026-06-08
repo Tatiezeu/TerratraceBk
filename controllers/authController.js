@@ -14,6 +14,20 @@ const signToken = (id) => {
     });
 };
 
+/**
+ * Securely resolve the frontend base URL for email links.
+ * Priority:
+ *   1. req.headers.origin — the exact URL the browser used to reach the frontend
+ *      (already contains the right hostname, port, and protocol).
+ *   2. FRONTEND_URL from .env — explicit override for production deployments.
+ *   3. Hard fallback: http://localhost:5173
+ *
+ * No raw IP addresses are ever hardcoded or injected.
+ */
+const getFrontendUrl = (req) => {
+    return process.env.FRONTEND_URL || req.headers.origin || 'http://localhost:5173';
+};
+
 // Create and send token
 const createSendToken = (user, statusCode, res) => {
     const token = signToken(user._id);
@@ -80,25 +94,9 @@ exports.signup = async (req, res) => {
             status: 'pending'
         });
 
-        // Send activation email via email
+        // Send activation email
         try {
-            const os = require('os');
-            let localIp = 'localhost';
-            const interfaces = os.networkInterfaces();
-            for (const name of Object.keys(interfaces)) {
-                for (const iface of interfaces[name]) {
-                    if (!iface.internal && iface.family === 'IPv4') {
-                        localIp = iface.address;
-                        break;
-                    }
-                }
-                if (localIp !== 'localhost') break;
-            }
-
-            let frontendUrl = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:5173';
-            if (frontendUrl.includes('localhost') || frontendUrl.includes('127.0.0.1')) {
-                frontendUrl = frontendUrl.replace('localhost', localIp).replace('127.0.0.1', localIp);
-            }
+            const frontendUrl = getFrontendUrl(req);
 
             const activationLink = `${frontendUrl}/activate?token=${rawToken}`;
             await sendEmail({
@@ -327,23 +325,7 @@ exports.resendCode = async (req, res) => {
                 user.activationTokenExpires = activationTokenExpires;
                 await user.save();
 
-                const os = require('os');
-                let localIp = 'localhost';
-                const interfaces = os.networkInterfaces();
-                for (const name of Object.keys(interfaces)) {
-                    for (const iface of interfaces[name]) {
-                        if (!iface.internal && iface.family === 'IPv4') {
-                            localIp = iface.address;
-                            break;
-                        }
-                    }
-                    if (localIp !== 'localhost') break;
-                }
-
-                let frontendUrl = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:5173';
-                if (frontendUrl.includes('localhost') || frontendUrl.includes('127.0.0.1')) {
-                    frontendUrl = frontendUrl.replace('localhost', localIp).replace('127.0.0.1', localIp);
-                }
+                const frontendUrl = getFrontendUrl(req);
 
                 const activationLink = `${frontendUrl}/activate?token=${rawToken}`;
                 await sendEmail({
@@ -440,12 +422,8 @@ exports.forgotPassword = async (req, res) => {
         user.resetPasswordExpires = resetPasswordExpires;
         await user.save({ validateBeforeSave: false });
 
-        // Build reset link point to user's IP 172.20.10.4
-        const localIp = '172.20.10.4';
-        let frontendUrl = req.headers.origin || process.env.FRONTEND_URL || `http://${localIp}:5173`;
-        if (frontendUrl.includes('localhost') || frontendUrl.includes('127.0.0.1')) {
-            frontendUrl = frontendUrl.replace('localhost', localIp).replace('127.0.0.1', localIp);
-        }
+        // Build reset link using the verified frontend origin
+        const frontendUrl = getFrontendUrl(req);
 
         const resetLink = `${frontendUrl}/reset-password?token=${rawToken}`;
 
