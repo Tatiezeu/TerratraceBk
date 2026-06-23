@@ -12,7 +12,7 @@ router.patch('/update-password', userController.updatePassword);
 router.get('/recipients', userController.getAllUsers);
 
 // Admin only routes
-router.use(restrictTo('SuperAdmin'));
+router.use(restrictTo('Admin'));
 router.get('/', userController.getAllUsers);
 router.post('/register-officer', userController.registerOfficer);
 router.patch('/:id', userController.updateUser);

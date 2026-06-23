@@ -5,7 +5,7 @@ exports.sendUnblockRequest = async (req, res) => {
     try {
         const { plotId, plotCode } = req.body;
         
-        const admins = await User.find({ role: { $in: ['SuperAdmin', 'Admin'] } });
+        const admins = await User.find({ role: { $in: ['Admin'] } });
         if (admins.length === 0) {
             return res.status(404).json({ success: false, message: 'No administrators found' });
         }
@@ -33,7 +33,7 @@ exports.sendUnblockRequest = async (req, res) => {
 
 exports.getMyNotifications = async (req, res) => {
     try {
-        const query = req.user.role === 'SuperAdmin' ? {} : { recipient: req.user.id };
+        const query = req.user.role === 'Admin' ? {} : { recipient: req.user.id };
         const notifications = await Notification.find(query)
             .sort({ createdAt: -1 })
             .limit(50)
@@ -126,6 +126,39 @@ exports.sendMessage = async (req, res) => {
             success: true,
             message: 'Message sent',
             data: notification
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+exports.sendContactMessage = async (req, res) => {
+    try {
+        const { name, email, subject, message } = req.body;
+        if (!name || !email || !message) {
+            return res.status(400).json({ success: false, message: 'Please provide name, email, and message' });
+        }
+
+        const admins = await User.find({ role: { $in: ['Admin'] } });
+        if (admins.length === 0) {
+            return res.status(404).json({ success: false, message: 'No administrators found' });
+        }
+
+        const notifications = await Promise.all(admins.map(admin => 
+            Notification.create({
+                recipient: admin._id,
+                sender: null,
+                type: 'system',
+                title: `Contact Inquiry: ${subject || 'General Info'}`,
+                message: `From: ${name} (${email})\n\nMessage:\n${message}`,
+                status: 'unread'
+            })
+        ));
+
+        res.status(201).json({
+            success: true,
+            message: 'Message sent to all Administrators successfully',
+            data: notifications[0]
         });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });

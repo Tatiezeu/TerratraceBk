@@ -17,7 +17,7 @@ router.post('/initiate', upload.array('attachments', 10), (req, res, next) => {
 // Specific routes MUST come before /:id to avoid conflicts
 router.get('/my-transfers', transferController.getMyTransfers);
 router.get('/public-notices', transferController.getPublicNotices);
-router.delete('/public-notices', restrictTo('SuperAdmin'), transferController.clearAllPublicNotices);
+router.delete('/public-notices', restrictTo('Admin'), transferController.clearAllPublicNotices);
 router.patch('/plot/:plotId/dispute', transferController.updatePlotDispute);
 router.post('/plot/:plotId/undispute', transferController.sendUndisputeRequest);
 

@@ -8,6 +8,6 @@ router.use(protect);
 
 // Users can create logs on operations, but only SuperAdmin can fetch all audit trail logs
 router.post('/', logController.createLog);
-router.get('/', restrictTo('SuperAdmin'), logController.getAllLogs);
+router.get('/', restrictTo('Admin'), logController.getAllLogs);
 
 module.exports = router;

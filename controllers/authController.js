@@ -425,7 +425,7 @@ exports.forgotPassword = async (req, res) => {
         // Build reset link using the verified frontend origin
         const frontendUrl = getFrontendUrl(req);
 
-        const resetLink = `${frontendUrl}/reset-password?token=${rawToken}`;
+        const resetLink = `${frontendUrl}/activate?token=${rawToken}&type=reset`;
 
         try {
             await sendEmail({

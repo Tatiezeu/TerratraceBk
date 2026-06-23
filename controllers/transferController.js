@@ -321,7 +321,7 @@ exports.updateTransferStatus = async (req, res) => {
                 const remainingArea = plot.area - transferredArea;
 
                 // 1. Create NEW plot for the buyer
-                const isStateBuyer = buyer.role === 'SuperAdmin';
+                const isStateBuyer = buyer.role === 'Admin';
                 const buyerCni = buyer.cniNumber || '000000000';
                 const cniSegment = isStateBuyer ? '00000' : buyerCni.slice(-5);
                 const typeCode = isStateBuyer ? "00050" : (transfer.transferType === 'direct_grant' ? "10005" : (plot.landType || "10005"));
@@ -364,7 +364,7 @@ exports.updateTransferStatus = async (req, res) => {
                     previousLandCode: plot.landCode
                 });
 
-                const isStateBuyer = buyer.role === 'SuperAdmin';
+                const isStateBuyer = buyer.role === 'Admin';
                 const buyerCni = buyer.cniNumber || '000000000';
                 const cniSegment = isStateBuyer ? '00000' : buyerCni.slice(-5);
                 const typeCode = isStateBuyer ? "00050" : (transfer.transferType === 'direct_grant' ? "10005" : (plot.landType || "10005"));
@@ -616,7 +616,7 @@ exports.updateDocuments = async (req, res) => {
         // Authorization: Only sender can update clientDocuments, only receiver or notary can update buyerDocuments?
         // For simplicity, let's allow it if they are part of the transfer
         const isParticipant = [transfer.sender.toString(), transfer.receiver.toString(), transfer.notary?.toString()].includes(req.user.id);
-        if (!isParticipant && req.user.role !== 'SuperAdmin') {
+        if (!isParticipant && req.user.role !== 'Admin') {
             return res.status(403).json({ success: false, message: 'Not authorized to update documents for this transfer' });
         }
 
@@ -643,7 +643,7 @@ exports.deleteDocument = async (req, res) => {
         if (!transfer) return res.status(404).json({ success: false, message: 'Transfer request not found' });
 
         const isParticipant = [transfer.sender.toString(), transfer.receiver.toString(), transfer.notary?.toString()].includes(req.user.id);
-        if (!isParticipant && req.user.role !== 'SuperAdmin') {
+        if (!isParticipant && req.user.role !== 'Admin') {
             return res.status(403).json({ success: false, message: 'Not authorized' });
         }
 

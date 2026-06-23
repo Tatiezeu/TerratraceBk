@@ -15,7 +15,7 @@ exports.registerLandAndOwner = async (req, res) => {
         // 1) Create or find user
         let user;
         if (landType === "00050" || landType === "public") {
-            user = await User.findOne({ role: "SuperAdmin" });
+            user = await User.findOne({ role: "Admin" });
         } else if (ownerId) {
             user = await User.findById(ownerId);
             if (!user) return res.status(404).json({ success: false, message: 'Existing owner not found' });
@@ -139,7 +139,7 @@ exports.getMyPlots = async (req, res) => {
         }).select('plot');
         const transferPlotIds = ongoingTransfers.map(tr => tr.plot);
         let query = { $or: [{ owner: req.user.id }, { _id: { $in: transferPlotIds } }] };
-        if (req.user.role === 'SuperAdmin') {
+        if (req.user.role === 'Admin') {
             query = { $or: [{ owner: req.user.id }, { landType: '00050' }, { _id: { $in: transferPlotIds } }] };
         }
         const plots = await LandPlot.find(query).populate('owner', 'firstName lastName').populate('ownershipHistory.owner', 'firstName lastName').lean();
@@ -168,7 +168,7 @@ exports.updatePlotStatus = async (req, res) => {
     try {
         const { status } = req.body;
         
-        if (req.user.role !== 'SuperAdmin' && req.user.role !== 'LRO') {
+        if (req.user.role !== 'Admin' && req.user.role !== 'LRO') {
             return res.status(403).json({ success: false, message: 'Unauthorized' });
         }
 

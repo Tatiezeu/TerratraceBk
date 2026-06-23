@@ -4,7 +4,7 @@ const configController = require('../controllers/configController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 
 router.use(protect);
-router.use(restrictTo('SuperAdmin'));
+router.use(restrictTo('Admin'));
 
 router.get('/', configController.getConfig);
 router.patch('/', configController.updateConfig);

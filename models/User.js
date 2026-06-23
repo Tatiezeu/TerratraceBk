@@ -42,7 +42,7 @@ const userSchema = new mongoose.Schema({
     },
     role: {
         type: String,
-        enum: ['Client', 'Landowner', 'LRO', 'Notary', 'SuperAdmin'],
+        enum: ['Client', 'Landowner', 'LRO', 'Notary', 'Admin'],
         default: 'Client'
     },
     profilePic: {

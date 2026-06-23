@@ -4,6 +4,8 @@ const notificationController = require('../controllers/notificationController');
 const { protect } = require('../middleware/authMiddleware');
 const upload = require('../utils/upload');
 
+router.post('/contact', notificationController.sendContactMessage);
+
 router.use(protect);
 
 router.get('/', notificationController.getMyNotifications);
