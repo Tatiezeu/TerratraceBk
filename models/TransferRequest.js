@@ -68,6 +68,22 @@ const transferRequestSchema = new mongoose.Schema({
     },
     paymentReceipt: String,
     
+    // CamPay & Payout details
+    campayReference: String,
+    campayStatus: String,
+    payoutStatus: {
+        type: String,
+        enum: ['UNRELEASED', 'RELEASED', 'FAILED'],
+        default: 'UNRELEASED'
+    },
+    payoutLog: [{
+        recipient: String,
+        amount: Number,
+        reference: String,
+        carrier: String,
+        timestamp: { type: Date, default: Date.now }
+    }],
+    
     notaryFeedback: String,
     lroFeedback: String,
     

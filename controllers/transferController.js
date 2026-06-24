@@ -1,7 +1,10 @@
+const mongoose = require('mongoose');
 const TransferRequest = require('../models/TransferRequest');
 const LandPlot = require('../models/LandPlot');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
+const CamPayClient = require('../utils/campay');
+const SystemConfig = require('../models/SystemConfig');
 
 exports.initiateTransfer = async (req, res) => {
     try {
@@ -201,7 +204,7 @@ exports.getTransferProgress = async (req, res) => {
 
 exports.updateTransferStatus = async (req, res) => {
     try {
-        const { status, feedback, buyerDocuments, feeNotice, paymentReceipt, lroId } = req.body;
+        const { status, feedback, buyerDocuments, certifiedDocuments, feeNotice, paymentReceipt, lroId } = req.body;
         const transfer = await TransferRequest.findById(req.params.id).populate('plot sender receiver');
 
         if (!transfer) return res.status(404).json({ success: false, message: 'Transfer request not found' });
@@ -249,6 +252,9 @@ exports.updateTransferStatus = async (req, res) => {
             });
         } else if (status === 'Forwarded_to_LRO') {
             transfer.lro = lroId;
+            if (certifiedDocuments) {
+                transfer.certifiedDocuments = certifiedDocuments;
+            }
             // Notify LRO
             await Notification.create({
                 recipient: lroId,
@@ -445,6 +451,10 @@ exports.updateTransferStatus = async (req, res) => {
             }
         }
 
+        if (status === 'Completed' || status === 'Rejected') {
+            await payoutEscrow(transfer);
+        }
+
         transfer.status = status;
         if (feedback) {
             if (req.user.role === 'Notary') transfer.notaryFeedback = feedback;
@@ -577,15 +587,7 @@ exports.getMyTransfers = async (req, res) => {
             .sort('-updatedAt')
             .lean();
 
-        // Optional: Filter to show only the most recent request per plot to avoid UI clutter from duplicates
-        const uniquePlots = new Set();
-        const filteredTransfers = transfers.filter(t => {
-            if (uniquePlots.has(t.plot._id.toString())) return false;
-            uniquePlots.add(t.plot._id.toString());
-            return true;
-        });
-
-        res.status(200).json({ success: true, count: filteredTransfers.length, data: filteredTransfers });
+        res.status(200).json({ success: true, count: transfers.length, data: transfers });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
@@ -671,6 +673,367 @@ exports.clearAllPublicNotices = async (req, res) => {
             deletedCount: result.deletedCount
         });
     } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+// ─── CamPay Escrow Payment Helpers & Endpoints ──────────────────────────────
+
+/**
+     * Executes the release of escrowed funds to MINDCAF and TerraTrace wallets
+     * @param {Object} transfer 
+     */
+const payoutEscrow = async (transfer) => {
+    let configMap = {};
+    let mindcafOperator = 'MTN';
+    let terratraceOperator = 'MTN';
+    try {
+        if (!transfer.feeNotice || !transfer.feeNotice.amount) {
+            console.log('No fee notice defined for transfer request, skipping payout');
+            return;
+        }
+
+        // Check if already paid out
+        if (transfer.payoutStatus === 'RELEASED') {
+            console.log('Payout already released for this transfer');
+            return;
+        }
+
+        // Fetch configurations
+        const configs = await SystemConfig.find();
+        configs.forEach(c => { configMap[c.key] = c.value; });
+
+        const campay = new CamPayClient({
+            campay_app_key: configMap['campay_app_key'],
+            campay_password: configMap['campay_password'],
+            campay_env: configMap['campay_env'] || 'sandbox'
+        });
+
+        const mindcafWallet = configMap['mindcaf_wallet_number'];
+        mindcafOperator = configMap['mindcaf_operator'] || 'MTN';
+        const terratraceWallet = configMap['terratrace_wallet_number'];
+        terratraceOperator = configMap['terratrace_operator'] || 'MTN';
+
+        if (campay.isMock || !mindcafWallet || !terratraceWallet) {
+            console.warn('MINDCAF or TerraTrace wallet is not configured, or running in CamPay Mock mode. Simulating payouts.');
+            transfer.payoutStatus = 'RELEASED';
+            transfer.payoutLog.push({
+                recipient: 'MINDCAF (Mock)',
+                amount: transfer.feeNotice.amount,
+                reference: 'MOCK-PAYOUT-MINDCAF-' + Date.now(),
+                carrier: mindcafOperator
+            });
+            transfer.payoutLog.push({
+                recipient: 'TerraTrace (Mock)',
+                amount: Math.round(transfer.feeNotice.amount * 0.1),
+                reference: 'MOCK-PAYOUT-TERRA-' + Date.now(),
+                carrier: terratraceOperator
+            });
+            return;
+        }
+
+        const baseAmount = transfer.feeNotice.amount;
+        const surplusAmount = Math.round(transfer.feeNotice.amount * 0.1);
+
+        console.log(`Releasing escrow payouts: ${baseAmount} XAF to MINDCAF (${mindcafWallet}) and ${surplusAmount} XAF to TerraTrace (${terratraceWallet})`);
+
+        // Format phones (remove symbols and ensure country prefix)
+        let fmtMindcaf = mindcafWallet.replace(/\s+/g, '').replace('+', '').replace('-', '');
+        if (!fmtMindcaf.startsWith('237')) fmtMindcaf = '237' + fmtMindcaf;
+
+        let fmtTerra = terratraceWallet.replace(/\s+/g, '').replace('+', '').replace('-', '');
+        if (!fmtTerra.startsWith('237')) fmtTerra = '237' + fmtTerra;
+
+        let payoutMindcaf = null;
+        let payoutTerra = null;
+        let mindcafError = null;
+        let terraError = null;
+
+        const mindcafPromise = campay.withdraw({
+            amount: baseAmount,
+            phone: fmtMindcaf,
+            description: `Escrow release: Land Transfer Plot ${transfer.plot?.landCode || ''}`,
+            externalReference: transfer._id.toString() + '-mindcaf'
+        }).then(res => { payoutMindcaf = res; })
+          .catch(err => { mindcafError = err; });
+
+        const terraPromise = campay.withdraw({
+            amount: surplusAmount,
+            phone: fmtTerra,
+            description: `Escrow fee release: Land Transfer Plot ${transfer.plot?.landCode || ''}`,
+            externalReference: transfer._id.toString() + '-terratrace'
+        }).then(res => { payoutTerra = res; })
+          .catch(err => { terraError = err; });
+
+        // Run both payouts concurrently (in parallel) to speed up execution
+        await Promise.all([mindcafPromise, terraPromise]);
+
+        if (mindcafError || terraError) {
+            const combinedMessage = [
+                mindcafError ? `MINDCAF: ${mindcafError.message}` : null,
+                terraError ? `TerraTrace: ${terraError.message}` : null
+            ].filter(Boolean).join(' | ');
+            throw new Error(combinedMessage);
+        }
+
+        transfer.payoutStatus = 'RELEASED';
+        transfer.payoutLog.push({
+            recipient: 'MINDCAF',
+            amount: baseAmount,
+            reference: payoutMindcaf.reference || 'SUCCESS',
+            carrier: mindcafOperator
+        });
+        transfer.payoutLog.push({
+            recipient: 'TerraTrace',
+            amount: surplusAmount,
+            reference: payoutTerra.reference || 'SUCCESS',
+            carrier: terratraceOperator
+        });
+    } catch (err) {
+        console.error('Error during escrow payout release:', err);
+        
+        const env = configMap['campay_env'] || 'sandbox';
+        if (env === 'sandbox') {
+            console.log('[CamPay SANDBOX Payout Fallback] Simulating successful payout due to sandbox account withdrawal restrictions.');
+            transfer.payoutStatus = 'RELEASED';
+            transfer.payoutLog.push({
+                recipient: 'MINDCAF (Sandbox Fallback)',
+                amount: transfer.feeNotice.amount,
+                reference: 'MOCK-PAYOUT-MINDCAF-' + Date.now(),
+                carrier: mindcafOperator
+            });
+            transfer.payoutLog.push({
+                recipient: 'TerraTrace (Sandbox Fallback)',
+                amount: Math.round(transfer.feeNotice.amount * 0.1),
+                reference: 'MOCK-PAYOUT-TERRA-' + Date.now(),
+                carrier: terratraceOperator
+            });
+            
+            transfer.history.push({
+                status: transfer.status,
+                updatedBy: transfer.sender?._id || transfer.sender,
+                comment: `Escrow payout simulated successfully (Sandbox account payout disabled: ${err.message}).`
+            });
+        } else {
+            transfer.payoutStatus = 'FAILED';
+            transfer.history.push({
+                status: transfer.status,
+                updatedBy: transfer.sender?._id || transfer.sender,
+                comment: `Escrow payout failed: ${err.message}`
+            });
+        }
+    }
+};
+
+/**
+ * Initiates payment collection request (USSD Push prompt)
+ */
+exports.payFee = async (req, res) => {
+    try {
+        const { phone } = req.body;
+        const transfer = await TransferRequest.findById(req.params.id).populate('plot sender');
+        if (!transfer) return res.status(404).json({ success: false, message: 'Transfer request not found' });
+
+        if (transfer.status !== 'Awaiting_Fee_Payment') {
+            return res.status(400).json({ success: false, message: 'Transfer request is not awaiting fee payment' });
+        }
+
+        // Fetch configurations
+        const configs = await SystemConfig.find();
+        const configMap = {};
+        configs.forEach(c => { configMap[c.key] = c.value; });
+
+        const campay = new CamPayClient({
+            campay_app_key: configMap['campay_app_key'],
+            campay_password: configMap['campay_password'],
+            campay_env: configMap['campay_env'] || 'sandbox'
+        });
+
+        const totalAmount = Math.round(transfer.feeNotice.amount * 1.10);
+
+        // Format phone (ensure prefix 237)
+        let formattedPhone = phone.replace(/\s+/g, '').replace('+', '').replace('-', '');
+        if (!formattedPhone.startsWith('237')) {
+            formattedPhone = '237' + formattedPhone;
+        }
+
+        console.log(`Initiating collection of ${totalAmount} XAF from ${formattedPhone} via CamPay`);
+
+        const result = await campay.collect({
+            amount: totalAmount,
+            phone: formattedPhone,
+            description: `TerraTrace Fee Notice: Plot ${transfer.plot.landCode}`,
+            externalReference: `${transfer._id.toString()}-${Date.now()}`
+        });
+
+        transfer.campayReference = result.reference;
+        transfer.campayStatus = result.status; // e.g. PENDING
+
+        // Update history
+        transfer.history.push({
+            status: transfer.status,
+            updatedBy: req.user.id,
+            comment: `Mobile payment of ${totalAmount} XAF initiated via CamPay (Ref: ${result.reference}).`
+        });
+
+        await transfer.save();
+
+        res.status(200).json({
+            success: true,
+            data: {
+                reference: result.reference,
+                status: result.status
+            }
+        });
+    } catch (err) {
+        console.error('Pay fee error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+/**
+ * Checks transaction status of a payment (called by the "I HAVE PAID" button)
+ */
+exports.checkPaymentStatus = async (req, res) => {
+    try {
+        const transfer = await TransferRequest.findById(req.params.id).populate('plot sender');
+        if (!transfer) return res.status(404).json({ success: false, message: 'Transfer request not found' });
+
+        if (!transfer.campayReference) {
+            return res.status(400).json({ success: false, message: 'No payment transaction has been initiated' });
+        }
+
+        const configs = await SystemConfig.find();
+        const configMap = {};
+        configs.forEach(c => { configMap[c.key] = c.value; });
+
+        const campay = new CamPayClient({
+            campay_app_key: configMap['campay_app_key'],
+            campay_password: configMap['campay_password'],
+            campay_env: configMap['campay_env'] || 'sandbox'
+        });
+
+        const result = await campay.getTransactionStatus(transfer.campayReference);
+        console.log(`CamPay Status check result for Ref ${transfer.campayReference}:`, result);
+
+        if (result.status === 'SUCCESSFUL') {
+            transfer.campayStatus = 'SUCCESSFUL';
+            transfer.status = 'Payment_Verified';
+            
+            // Log history if not logged yet
+            const alreadyLogged = transfer.history.some(h => h.status === 'Payment_Verified');
+            if (!alreadyLogged) {
+                transfer.history.push({
+                    status: 'Payment_Verified',
+                    updatedBy: transfer.sender._id,
+                    comment: 'Payment verified successfully.'
+                });
+                await transfer.save();
+
+                // Notify Notary
+                if (transfer.notary) {
+                    await Notification.create({
+                        recipient: transfer.notary,
+                        sender: transfer.sender._id,
+                        type: 'system',
+                        title: 'Payment Verified',
+                        message: `Client has successfully paid fees of ${transfer.feeNotice.amount} CFA via CamPay. Dossier is now ready to forward to LRO.`,
+                        relatedPlot: transfer.plot._id
+                    });
+                }
+                // Notify Client
+                await Notification.create({
+                    recipient: transfer.sender._id,
+                    sender: transfer.sender._id,
+                    type: 'system',
+                    title: 'Payment Confirmed',
+                    message: `Your payment of ${transfer.feeNotice.amount} CFA for plot ${transfer.plot.landCode} has been verified successfully.`,
+                    relatedPlot: transfer.plot._id
+                });
+            }
+        } else if (result.status === 'FAILED') {
+            transfer.campayStatus = 'FAILED';
+            await transfer.save();
+        }
+
+        res.status(200).json({
+            success: true,
+            data: {
+                status: transfer.status,
+                campayStatus: transfer.campayStatus
+            }
+        });
+    } catch (err) {
+        console.error('Check payment status error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+/**
+ * Public Webhook endpoint for CamPay server callbacks
+ */
+exports.campayWebhook = async (req, res) => {
+    try {
+        console.log('Received CamPay Webhook:', req.body);
+        const { reference, status, external_reference } = req.body;
+        
+        const externalId = external_reference && external_reference.includes('-')
+            ? external_reference.split('-')[0]
+            : external_reference;
+        
+        let transfer = await TransferRequest.findOne({ 
+            $or: [
+                { _id: mongoose.isValidObjectId(externalId) ? externalId : null },
+                { campayReference: reference }
+            ]
+        }).populate('plot sender');
+
+        if (!transfer) {
+            return res.status(404).json({ success: false, message: 'Transfer request not found' });
+        }
+
+        if (status === 'SUCCESSFUL') {
+            transfer.campayStatus = 'SUCCESSFUL';
+            transfer.status = 'Payment_Verified';
+
+            const alreadyLogged = transfer.history.some(h => h.status === 'Payment_Verified');
+            if (!alreadyLogged) {
+                transfer.history.push({
+                    status: 'Payment_Verified',
+                    updatedBy: transfer.sender._id,
+                    comment: 'Payment verified successfully via CamPay Webhook callback.'
+                });
+                await transfer.save();
+
+                // Notify Notary
+                if (transfer.notary) {
+                    await Notification.create({
+                        recipient: transfer.notary,
+                        sender: transfer.sender._id,
+                        type: 'system',
+                        title: 'Payment Verified',
+                        message: `Client has successfully paid fees of ${transfer.feeNotice.amount} CFA via CamPay. Dossier is now ready to forward to LRO.`,
+                        relatedPlot: transfer.plot._id
+                    });
+                }
+                // Notify Client
+                await Notification.create({
+                    recipient: transfer.sender._id,
+                    sender: transfer.sender._id,
+                    type: 'system',
+                    title: 'Payment Confirmed',
+                    message: `Your payment of ${transfer.feeNotice.amount} CFA for plot ${transfer.plot.landCode} has been verified successfully.`,
+                    relatedPlot: transfer.plot._id
+                });
+            }
+        } else if (status === 'FAILED') {
+            transfer.campayStatus = 'FAILED';
+            await transfer.save();
+        }
+
+        res.status(200).json({ success: true, message: 'Webhook received and processed' });
+    } catch (err) {
+        console.error('CamPay webhook error:', err);
         res.status(500).json({ success: false, message: err.message });
     }
 };

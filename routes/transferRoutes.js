@@ -4,6 +4,9 @@ const transferController = require('../controllers/transferController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const upload = require('../utils/upload');
 
+// Public webhook route (called by CamPay without authentication)
+router.post('/campay-webhook', transferController.campayWebhook);
+
 router.use(protect);
 
 router.post('/initiate', upload.array('attachments', 10), (req, res, next) => {
@@ -23,6 +26,8 @@ router.post('/plot/:plotId/undispute', transferController.sendUndisputeRequest);
 
 // Transfer detail routes
 router.get('/:id/progress', transferController.getTransferProgress); // Real-time tracker
+router.post('/:id/pay-fee', transferController.payFee);
+router.get('/:id/check-payment', transferController.checkPaymentStatus);
 router.get('/:id', transferController.getTransferDetails);
 
 router.patch('/:id/status', upload.fields([
@@ -33,7 +38,7 @@ router.patch('/:id/status', upload.fields([
         const filePaths = req.files.attachments.map(f => `/uploads/${f.filename}`);
         if (req.body.status === 'Awaiting_Fee_Payment') {
             req.body.buyerDocuments = filePaths;
-        } else if (req.body.status === 'Payment_Verified') {
+        } else if (req.body.status === 'Payment_Verified' || req.body.status === 'Forwarded_to_LRO') {
             req.body.certifiedDocuments = filePaths;
         } else {
             req.body.buyerDocuments = filePaths;
