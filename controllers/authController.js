@@ -4,7 +4,7 @@ const { generateVerificationCode } = require('../utils/algorithm');
 const bcrypt = require('bcryptjs');
 const SystemConfig = require('../models/SystemConfig');
 const sendEmail = require('../utils/email');
-const { VerificationEmailTemplate, ActivationEmailTemplate, ForgotPasswordEmailTemplate } = require('../utils/emailTemplates');
+const { VerificationEmailTemplate, ActivationEmailTemplate, ForgotPasswordEmailTemplate, ActivationCodeEmailTemplate } = require('../utils/emailTemplates');
 const { verifyRecaptcha } = require('../utils/recaptcha');
 
 // Sign token
@@ -71,11 +71,9 @@ exports.signup = async (req, res) => {
             return res.status(400).json({ success: false, message: 'User already exists' });
         }
 
-        // Generate cryptographically secure activation token
-        const crypto = require('crypto');
-        const rawToken = crypto.randomBytes(32).toString('hex');
-        const activationToken = crypto.createHash('sha256').update(rawToken).digest('hex');
-        const activationTokenExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+        // Generate 6-digit verification code for signup activation
+        const code = generateVerificationCode();
+        const verificationCodeExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
 
         const newUser = await User.create({
             firstName,
@@ -88,22 +86,19 @@ exports.signup = async (req, res) => {
             password,
             role,
             profilePic,
-            activationToken,
-            activationTokenExpires,
+            verificationCode: code,
+            verificationCodeExpires,
             isVerified: false,
             status: 'pending'
         });
 
-        // Send activation email
+        // Send activation email with code
         try {
-            const frontendUrl = getFrontendUrl(req);
-
-            const activationLink = `${frontendUrl}/activate?token=${rawToken}`;
             await sendEmail({
                 email: newUser.email,
                 subject: 'TerraTrace - Activate Your Account',
-                message: `Please activate your account by visiting: ${activationLink}`,
-                html: ActivationEmailTemplate(activationLink, `${newUser.firstName} ${newUser.lastName}`)
+                message: `Your account activation code is: ${code}`,
+                html: ActivationCodeEmailTemplate(code, `${newUser.firstName} ${newUser.lastName}`)
             });
         } catch (err) {
             console.error('Email sending failed:', err);
@@ -111,7 +106,7 @@ exports.signup = async (req, res) => {
 
         res.status(201).json({
             success: true,
-            message: 'Activation link sent to your email',
+            message: 'Activation code sent to your email',
             email: newUser.email
         });
     } catch (err) {
@@ -194,7 +189,7 @@ exports.login = async (req, res) => {
         if (user.status === 'pending' || !user.isVerified) {
             return res.status(401).json({
                 success: false,
-                message: 'Your account is inactive. Please click the activation link in your email to activate it.'
+                message: 'Your account is inactive. Account not verified. Please verify your email with the activation code sent to you.'
             });
         }
 
@@ -315,24 +310,19 @@ exports.resendCode = async (req, res) => {
         // Send email
         try {
             if (!user.isVerified) {
-                // Generate a fresh activation token
-                const crypto = require('crypto');
-                const rawToken = crypto.randomBytes(32).toString('hex');
-                const activationToken = crypto.createHash('sha256').update(rawToken).digest('hex');
-                const activationTokenExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+                // Generate a fresh verification code
+                const code = generateVerificationCode();
+                const verificationCodeExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
 
-                user.activationToken = activationToken;
-                user.activationTokenExpires = activationTokenExpires;
+                user.verificationCode = code;
+                user.verificationCodeExpires = verificationCodeExpires;
                 await user.save();
 
-                const frontendUrl = getFrontendUrl(req);
-
-                const activationLink = `${frontendUrl}/activate?token=${rawToken}`;
                 await sendEmail({
                     email: user.email,
                     subject: 'TerraTrace - Activate Your Account',
-                    message: `Please activate your account by visiting: ${activationLink}`,
-                    html: ActivationEmailTemplate(activationLink, `${user.firstName} ${user.lastName}`)
+                    message: `Your account activation code is: ${code}`,
+                    html: ActivationCodeEmailTemplate(code, `${user.firstName} ${user.lastName}`)
                 });
             } else {
                 // If verified, standard 2FA code is sent

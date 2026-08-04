@@ -1,5 +1,8 @@
 const axios = require('axios');
 
+// Global cache for CamPay access tokens keyed by appKey:password
+const cachedTokens = {};
+
 class CamPayClient {
     /**
      * @param {Object} config 
@@ -21,14 +24,46 @@ class CamPayClient {
             return 'mock-token';
         }
         try {
+            const username = this.config.campay_app_key;
+            const password = this.config.campay_password;
+            const cacheKey = `${username}:${password}`;
+            const now = Date.now();
+
+            // Return cached token if it exists and has at least 60 seconds of validity remaining
+            if (cachedTokens[cacheKey] && cachedTokens[cacheKey].expiresAt > now + 60000) {
+                return cachedTokens[cacheKey].token;
+            }
+
             const response = await axios.post(`${this.baseUrl}/token/`, {
-                username: this.config.campay_app_key,
-                password: this.config.campay_password
+                username,
+                password
             }, {
                 headers: { 'Content-Type': 'application/json' },
                 timeout: 10000
             });
-            return response.data.token;
+
+            const token = response.data.token;
+            let expiresAt = now + 3600 * 1000; // Default fallback to 1 hour cache duration
+
+            // Parse expiration time (exp) from the JWT token
+            try {
+                const parts = token.split('.');
+                if (parts.length === 3) {
+                    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+                    if (payload.exp) {
+                        expiresAt = payload.exp * 1000;
+                    }
+                }
+            } catch (e) {
+                console.warn('[CamPayClient] Failed to parse token expiration, defaulting to 1 hour:', e.message);
+            }
+
+            cachedTokens[cacheKey] = {
+                token,
+                expiresAt
+            };
+
+            return token;
         } catch (err) {
             console.error('CamPay Token Request Error:', err.response?.data || err.message);
             throw new Error(`CamPay authentication failed: ${err.response?.data?.detail || err.message}`);

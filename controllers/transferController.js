@@ -389,6 +389,15 @@ exports.updateTransferStatus = async (req, res) => {
                 await User.findByIdAndUpdate(buyer._id, { role: 'Landowner' });
             }
 
+            // Downgrade Seller to Client role if they no longer own any land plots
+            const seller = transfer.sender;
+            if (seller && seller.role === 'Landowner') {
+                const sellerPlots = await LandPlot.countDocuments({ owner: seller._id });
+                if (sellerPlots === 0) {
+                    await User.findByIdAndUpdate(seller._id, { role: 'Client' });
+                }
+            }
+
             const participants = [transfer.sender?._id || transfer.sender, transfer.receiver?._id || transfer.receiver, transfer.notary].filter(Boolean);
             for (const pid of participants) {
                 await Notification.create({

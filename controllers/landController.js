@@ -19,6 +19,10 @@ exports.registerLandAndOwner = async (req, res) => {
         } else if (ownerId) {
             user = await User.findById(ownerId);
             if (!user) return res.status(404).json({ success: false, message: 'Existing owner not found' });
+            if (user.role === 'Client') {
+                user.role = 'Landowner';
+                await user.save();
+            }
         } else {
             user = await User.findOne({ email: ownerEmail });
             if (!user) {
@@ -33,6 +37,9 @@ exports.registerLandAndOwner = async (req, res) => {
                     isVerified: true,
                     status: "active"
                 });
+            } else if (user.role === 'Client') {
+                user.role = 'Landowner';
+                await user.save();
             }
         }
 
@@ -51,7 +58,7 @@ exports.registerLandAndOwner = async (req, res) => {
             price: price || 0,
             area: area || 0,
             coordinates,
-            matterportId,
+            matterportId: matterportId || 'SxQL3iGyvJ5',
             description,
             coverImage: req.file ? `/assets/images/plots/${req.file.filename}` : 'default-plot.jpg',
             status: status || ((landType === "public" || landType === "00050") ? "flagged" : "cleared")
@@ -102,11 +109,16 @@ exports.createLandPlot = async (req, res) => {
             price,
             area,
             coordinates,
-            matterportId,
+            matterportId: matterportId || 'SxQL3iGyvJ5',
             description,
             coverImage: req.file ? `/assets/images/plots/${req.file.filename}` : 'default-plot.jpg',
             status: status || ((landType === "public" || landType === "00050") ? "flagged" : "cleared")
         });
+
+        // Upgrade Client to Landowner role
+        if (req.user && req.user.role === 'Client') {
+            await User.findByIdAndUpdate(req.user.id, { role: 'Landowner' });
+        }
 
         res.status(201).json({
             success: true,

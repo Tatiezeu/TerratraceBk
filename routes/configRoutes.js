@@ -4,10 +4,12 @@ const configController = require('../controllers/configController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 
 router.use(protect);
-router.use(restrictTo('Admin'));
 
 router.get('/', configController.getConfig);
-router.patch('/', configController.updateConfig);
-router.post('/test-email', configController.testEmail);
+
+// Admin-only operations
+router.patch('/', restrictTo('Admin'), configController.updateConfig);
+router.post('/test-email', restrictTo('Admin'), configController.testEmail);
+router.post('/test-chatbot', restrictTo('Admin'), configController.testChatbot);
 
 module.exports = router;
