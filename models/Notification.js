@@ -38,5 +38,10 @@ const notificationSchema = new mongoose.Schema({
     timestamps: true
 });
 
+// Performance indexes for fast inbox and sent queries
+notificationSchema.index({ recipient: 1, createdAt: -1 });
+notificationSchema.index({ sender: 1, createdAt: -1 });
+notificationSchema.index({ status: 1 });
+
 const Notification = mongoose.model('Notification', notificationSchema);
 module.exports = Notification;

@@ -89,6 +89,8 @@ const landPlotSchema = new mongoose.Schema({
 
 landPlotSchema.index({ owner: 1 });
 landPlotSchema.index({ status: 1 });
+landPlotSchema.index({ regionCode: 1, status: 1 });
+landPlotSchema.index({ landCode: 1 });
 
 const LandPlot = mongoose.model('LandPlot', landPlotSchema);
 module.exports = LandPlot;

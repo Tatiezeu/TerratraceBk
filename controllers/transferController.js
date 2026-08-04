@@ -297,16 +297,14 @@ exports.updateTransferStatus = async (req, res) => {
 
             // Notify all participants (filter out undefined notary for direct grants)
             const pids = [transfer.sender?._id, transfer.receiver?._id, transfer.notary].filter(Boolean);
-            for (const pid of pids) {
-                await Notification.create({
+            await Promise.all(pids.map(pid => Notification.create({
                     recipient: pid,
                     sender: req.user.id,
                     type: 'system',
                     title: 'Public Notice Published',
                     message: `The public notice for plot ${transfer.plot.landCode} located at ${transfer.plot.location} (${transfer.plot.area} sqm), being transferred from ${senderName} to ${receiverName}, has been published and is active until ${new Date(transfer.publicNotice.endDate).toLocaleDateString()}.`,
                     relatedPlot: transfer.plot._id
-                });
-            }
+                })));
         } else if (status === 'Completed') {
             if (transfer.status === 'Rejected') {
                 return res.status(400).json({ success: false, message: 'This transfer request has been rejected.' });
@@ -399,16 +397,14 @@ exports.updateTransferStatus = async (req, res) => {
             }
 
             const participants = [transfer.sender?._id || transfer.sender, transfer.receiver?._id || transfer.receiver, transfer.notary].filter(Boolean);
-            for (const pid of participants) {
-                await Notification.create({
+            await Promise.all(participants.map(pid => Notification.create({
                     recipient: pid,
                     sender: req.user.id,
                     type: 'system',
                     title: 'Transfer Completed & Authorized',
                     message: `The transfer for plot ${plot.landCode} has been successfully authorized. The plot is now registered under the new owner but remains in 'transferred' status for a 1-year verification period.`,
                     relatedPlot: plot._id
-                });
-            }
+                })));
 
             // Mark all other pending transfer requests for the same plot as Cancelled
             await TransferRequest.updateMany(
@@ -582,9 +578,10 @@ exports.getMyTransfers = async (req, res) => {
         }
 
         const transfers = await TransferRequest.find(filters)
+            .select('plot sender receiver notary lro status transferType isSubdivision transferArea feeNotice publicNotice campayStatus campayReference paymentReceipt payoutStatus clientDocuments buyerDocuments certifiedDocuments notaryFeedback lroFeedback objections history createdAt updatedAt')
             .populate({
                 path: 'plot',
-                select: 'landCode location area coverImage status plotNumber owner',
+                select: 'landCode location area coverImage status plotNumber owner regionCode',
                 populate: {
                     path: 'owner',
                     select: 'firstName lastName email'
@@ -605,7 +602,8 @@ exports.getMyTransfers = async (req, res) => {
 exports.getPublicNotices = async (req, res) => {
     try {
         const notices = await TransferRequest.find({ status: 'Public_Notice' })
-            .populate('plot')
+            .select('plot sender lro status transferType publicNotice objections feeNotice createdAt updatedAt')
+            .populate('plot', 'landCode location area status regionCode landType description coverImage')
             .populate('sender', 'firstName lastName')
             .populate('lro', 'firstName lastName')
             .sort('-updatedAt')

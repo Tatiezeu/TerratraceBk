@@ -519,6 +519,39 @@ Provide a clean, structured summary covering:
 - Status (clear, pending, disputed, etc.)
 - Price (if available, otherwise state "Price not listed")`;
 
+// ── Module-level in-memory caches ─────────────────────────────────────────
+let _configCache = null;
+let _configCacheTs = 0;
+const CONFIG_TTL = 60 * 1000; // 60 seconds
+
+let _plotContextCache = null;
+let _plotContextCacheTs = 0;
+const PLOT_CONTEXT_TTL = 90 * 1000; // 90 seconds
+
+async function getCachedConfig() {
+    const now = Date.now();
+    if (_configCache && (now - _configCacheTs) < CONFIG_TTL) return _configCache;
+    const configs = await SystemConfig.find().lean();
+    const cfg = {};
+    configs.forEach(c => { cfg[c.key] = c.value; });
+    _configCache = cfg;
+    _configCacheTs = now;
+    return cfg;
+}
+
+async function getCachedPlotContext() {
+    const now = Date.now();
+    if (_plotContextCache && (now - _plotContextCacheTs) < PLOT_CONTEXT_TTL) return _plotContextCache;
+    const ctx = await buildPlotContext([]);
+    _plotContextCache = ctx;
+    _plotContextCacheTs = now;
+    return ctx;
+}
+
+// Call this after any plot DB write to bust the plot context cache immediately
+function bustPlotContextCache() {
+    _plotContextCacheTs = 0;
+}
 
 // Speed-priority fallback models (fastest first based on empirical testing)
 const GEMINI_MODELS = [
@@ -673,9 +706,7 @@ async function fireEscalationNotification(user, description) {
 
 exports.chat = async (req, res) => {
     try {
-        const configs = await SystemConfig.find().lean();
-        const cfg = {};
-        configs.forEach(c => { cfg[c.key] = c.value; });
+        const cfg = await getCachedConfig();
 
         if (cfg.chatbotEnabled === false) {
             return res.status(400).json({ success: false, message: 'TerraTrace AI is currently disabled by Admin.' });
@@ -690,7 +721,7 @@ exports.chat = async (req, res) => {
         }
 
         const recentMessages = messages.slice(-16);
-        const plotContext = await buildPlotContext(recentMessages);
+        const plotContext = await getCachedPlotContext();
 
         const user = req.user;
         const userRole = user ? user.role : 'Client';
@@ -761,7 +792,7 @@ ROLE GUIDELINES:
             replyText = await callGemini(cfg.chatbotApiKey, cfg.chatbotProjectNumber || '', {
                 contents: formattedContents,
                 systemInstruction: { parts: [{ text: systemText }] },
-                generationConfig: { maxOutputTokens: 600, temperature: 0.45, topP: 0.88 }
+                generationConfig: { maxOutputTokens: 500, temperature: 0.4, topP: 0.85 }
             });
 
         } else {
@@ -839,9 +870,7 @@ exports.train = async (req, res) => {
 // Streaming Chatbot endpoint (SSE) using generateContentStream
 exports.streamChat = async (req, res) => {
     try {
-        const configs = await SystemConfig.find().lean();
-        const cfg = {};
-        configs.forEach(c => { cfg[c.key] = c.value; });
+        const cfg = await getCachedConfig();
 
         if (cfg.chatbotEnabled === false) {
             return res.status(400).json({ success: false, message: 'TerraTrace AI is currently disabled by Admin.' });
@@ -856,7 +885,7 @@ exports.streamChat = async (req, res) => {
         }
 
         const recentMessages = messages.slice(-16);
-        const plotContext = await buildPlotContext(recentMessages);
+        const plotContext = await getCachedPlotContext();
 
         const user = req.user;
         const userRole = user ? user.role : 'Client';
@@ -910,7 +939,7 @@ exports.streamChat = async (req, res) => {
             body: JSON.stringify({
                 contents: formattedContents,
                 systemInstruction: { parts: [{ text: systemText }] },
-                generationConfig: { maxOutputTokens: 600, temperature: 0.45, topP: 0.88 }
+                generationConfig: { maxOutputTokens: 500, temperature: 0.4, topP: 0.85 }
             })
         });
 
