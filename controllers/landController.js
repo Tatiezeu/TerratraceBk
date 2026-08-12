@@ -131,7 +131,10 @@ exports.createLandPlot = async (req, res) => {
 
 exports.getAllPlots = async (req, res) => {
     try {
-        const plots = await LandPlot.find().populate('owner', 'firstName lastName').populate('ownershipHistory.owner', 'firstName lastName').lean();
+        const plots = await LandPlot.find()
+            .select('landCode landType regionCode plotNumber location price area coordinates matterportId description coverImage status owner ownershipHistory createdAt updatedAt')
+            .populate('owner', 'firstName lastName email profilePic')
+            .lean();
         res.status(200).json({
             success: true,
             count: plots.length,
@@ -154,7 +157,10 @@ exports.getMyPlots = async (req, res) => {
         if (req.user.role === 'Admin') {
             query = { $or: [{ owner: req.user.id }, { landType: '00050' }, { _id: { $in: transferPlotIds } }] };
         }
-        const plots = await LandPlot.find(query).populate('owner', 'firstName lastName').populate('ownershipHistory.owner', 'firstName lastName').lean();
+        const plots = await LandPlot.find(query)
+            .select('landCode landType regionCode plotNumber location price area coordinates matterportId description coverImage status owner ownershipHistory createdAt updatedAt')
+            .populate('owner', 'firstName lastName email profilePic')
+            .lean();
         res.status(200).json({ success: true, count: plots.length, data: plots });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });

@@ -7,10 +7,23 @@ const fs = require('fs');
 // Get current user profile
 exports.getMe = async (req, res) => {
     try {
-        const user = await User.findById(req.user.id).lean();
+        let user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+        // Auto-sync Client <-> Landowner role based on real-time land plot ownership
+        if (user.role === 'Client' || user.role === 'Landowner') {
+            const LandPlot = require('../models/LandPlot');
+            const plotsCount = await LandPlot.countDocuments({ owner: user._id });
+            const expectedRole = plotsCount > 0 ? 'Landowner' : 'Client';
+            if (user.role !== expectedRole) {
+                user.role = expectedRole;
+                await user.save();
+            }
+        }
+
         res.status(200).json({
             success: true,
-            data: user
+            data: user.toObject()
         });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
@@ -143,7 +156,12 @@ exports.getAllUsers = async (req, res) => {
         const filter = {};
         if (req.query.role) filter.role = req.query.role;
         
-        const users = await User.find(filter).select('-verificationCode -verificationCodeExpires');
+        // For recipient lookups, return only necessary identity fields to reduce payload size
+        const isRecipientQuery = !req.query.role && req.path !== '/';
+        const selectFields = isRecipientQuery
+            ? 'firstName lastName email role profilePic status'
+            : '-verificationCode -verificationCodeExpires -password -__v';
+        const users = await User.find(filter).select(selectFields).lean();
         res.status(200).json({
             success: true,
             data: users

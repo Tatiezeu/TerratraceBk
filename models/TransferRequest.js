@@ -116,12 +116,13 @@ const transferRequestSchema = new mongoose.Schema({
     timestamps: true
 });
 
-transferRequestSchema.index({ sender: 1 });
-transferRequestSchema.index({ receiver: 1 });
-transferRequestSchema.index({ notary: 1 });
-transferRequestSchema.index({ lro: 1 });
+// ── Performance indexes for fast role-based transfer queries ────────────────
+transferRequestSchema.index({ notary: 1, updatedAt: -1 });
+transferRequestSchema.index({ lro: 1, updatedAt: -1 });
+transferRequestSchema.index({ sender: 1, updatedAt: -1 });
+transferRequestSchema.index({ receiver: 1, updatedAt: -1 });
+transferRequestSchema.index({ status: 1, updatedAt: -1 });
 transferRequestSchema.index({ plot: 1 });
-transferRequestSchema.index({ status: 1 });
 
 const TransferRequest = mongoose.model('TransferRequest', transferRequestSchema);
 module.exports = TransferRequest;

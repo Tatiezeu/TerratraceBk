@@ -954,26 +954,67 @@ exports.streamChat = async (req, res) => {
         const decoder = new TextDecoder();
         let fullText = '';
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = decoder.decode(value, { stream: true });
-            
-            const lines = chunk.split('\n');
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const jsonStr = line.slice(6).trim();
-                    if (!jsonStr || jsonStr === '[DONE]') continue;
-                    try {
-                        const parsed = JSON.parse(jsonStr);
-                        const textChunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-                        if (textChunk) {
-                            fullText += textChunk;
-                            res.write(`data: ${JSON.stringify({ text: textChunk })}\n\n`);
-                        }
-                    } catch (e) {}
+        // ── Resilient stream reading with ECONNRESET / TCP reset fallback ──────
+        let streamAborted = false;
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const chunk = decoder.decode(value, { stream: true });
+
+                const lines = chunk.split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const jsonStr = line.slice(6).trim();
+                        if (!jsonStr || jsonStr === '[DONE]') continue;
+                        try {
+                            const parsed = JSON.parse(jsonStr);
+                            const textChunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                            if (textChunk) {
+                                fullText += textChunk;
+                                res.write(`data: ${JSON.stringify({ text: textChunk })}\n\n`);
+                            }
+                        } catch (e) {}
+                    }
                 }
             }
+        } catch (streamErr) {
+            // Connection reset mid-stream (ECONNRESET / "read: connection reset by peer")
+            const isReset = streamErr.code === 'ECONNRESET' ||
+                            streamErr.message?.includes('connection reset') ||
+                            streamErr.message?.includes('stream reading error');
+
+            if (isReset) {
+                console.warn('⚠️ Gemini stream reset by peer. fullText so far:', fullText.length, 'chars');
+                if (fullText.length > 20) {
+                    // We already have meaningful partial text — just close cleanly
+                    console.log('✅ Partial text sufficient, delivering and closing stream.');
+                } else {
+                    // Nothing useful yet — fall back to non-streaming generateContent
+                    console.log('🔄 Falling back to non-streaming Gemini call...');
+                    try {
+                        const fallbackText = await callGemini(cfg.chatbotApiKey, cfg.chatbotProjectNumber || '', {
+                            contents: formattedContents,
+                            systemInstruction: { parts: [{ text: systemText }] },
+                            generationConfig: { maxOutputTokens: 500, temperature: 0.4, topP: 0.85 }
+                        }, 1);
+                        if (fallbackText) {
+                            fullText = fallbackText;
+                            res.write(`data: ${JSON.stringify({ text: fallbackText })}\n\n`);
+                        }
+                    } catch (fallbackErr) {
+                        console.error('Fallback also failed:', fallbackErr.message);
+                        res.write(`data: ${JSON.stringify({ error: 'Connection was interrupted. Please try again.' })}\n\n`);
+                    }
+                }
+            } else {
+                // Unknown stream error — surface it
+                console.error('Stream reading error:', streamErr.message);
+                if (fullText.length === 0) {
+                    res.write(`data: ${JSON.stringify({ error: streamErr.message })}\n\n`);
+                }
+            }
+            streamAborted = true;
         }
 
         const escalateMatch = fullText.match(/\[\[ESCALATE:\s*([\s\S]*?)\]\]/);
@@ -987,8 +1028,16 @@ exports.streamChat = async (req, res) => {
         res.end();
     } catch (err) {
         console.error('Stream error:', err);
-        res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-        res.write('data: [DONE]\n\n');
-        res.end();
+        // Headers may or may not have been sent yet
+        if (!res.headersSent) {
+            res.status(500).json({ success: false, message: err.message });
+        } else {
+            try {
+                res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+                res.write('data: [DONE]\n\n');
+                res.end();
+            } catch (_) {}
+        }
     }
 };
+

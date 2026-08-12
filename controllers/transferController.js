@@ -265,13 +265,18 @@ exports.updateTransferStatus = async (req, res) => {
                 relatedPlot: transfer.plot._id
             });
         } else if (status === 'Public_Notice') {
+            if (!transfer.lro && req.user && req.user.role === 'LRO') {
+                transfer.lro = req.user.id;
+            }
             const { startDate, endDate } = req.body.publicNotice || {};
             let finalEndDate = endDate;
             if (!finalEndDate) {
                 const SystemConfig = require('../models/SystemConfig');
-                const testModeConfig = await SystemConfig.findOne({ key: 'noticeTestMode' });
-                const testMinutesConfig = await SystemConfig.findOne({ key: 'noticeTestMinutes' });
-                const durationDaysConfig = await SystemConfig.findOne({ key: 'noticeDurationDays' });
+                const [testModeConfig, testMinutesConfig, durationDaysConfig] = await Promise.all([
+                    SystemConfig.findOne({ key: 'noticeTestMode' }),
+                    SystemConfig.findOne({ key: 'noticeTestMinutes' }),
+                    SystemConfig.findOne({ key: 'noticeDurationDays' })
+                ]);
 
                 const testMode = testModeConfig ? testModeConfig.value : false;
                 const testMinutes = testMinutesConfig ? testMinutesConfig.value : 10;
@@ -324,19 +329,20 @@ exports.updateTransferStatus = async (req, res) => {
                 const transferredArea = parseFloat(transfer.transferArea);
                 const remainingArea = plot.area - transferredArea;
 
-                // 1. Create NEW plot for the buyer
+                // 1. Create NEW plot for the buyer with buyer's CNI segment
                 const isStateBuyer = buyer.role === 'Admin';
-                const buyerCni = buyer.cniNumber || '000000000';
+                const buyerCni = buyer.cniNumber || '00000';
                 const cniSegment = isStateBuyer ? '00000' : buyerCni.slice(-5);
                 const typeCode = isStateBuyer ? "00050" : (transfer.transferType === 'direct_grant' ? "10005" : (plot.landType || "10005"));
                 const regionCode = plot.regionCode || "01";
+                const cleanPlotNum = (plot.plotNumber || '000').replace(/-P$/, '');
                 
                 await LandPlot.create({
-                    landCode: `${typeCode}-${regionCode}-${cniSegment}-${plot.plotNumber || '000'}-P${Date.now().toString().slice(-4)}`,
+                    landCode: `${typeCode}-${regionCode}-${cniSegment}-${cleanPlotNum}-P${Date.now().toString().slice(-4)}`,
                     owner: buyer._id,
                     landType: typeCode,
                     regionCode: plot.regionCode,
-                    plotNumber: `${plot.plotNumber}-P`,
+                    plotNumber: `${cleanPlotNum}-P`,
                     location: plot.location,
                     price: (plot.price / plot.area) * transferredArea,
                     area: transferredArea,
@@ -369,12 +375,14 @@ exports.updateTransferStatus = async (req, res) => {
                 });
 
                 const isStateBuyer = buyer.role === 'Admin';
-                const buyerCni = buyer.cniNumber || '000000000';
+                const buyerCni = buyer.cniNumber || '00000';
                 const cniSegment = isStateBuyer ? '00000' : buyerCni.slice(-5);
                 const typeCode = isStateBuyer ? "00050" : (transfer.transferType === 'direct_grant' ? "10005" : (plot.landType || "10005"));
                 const regionCode = plot.regionCode || "01";
+                const cleanPlotNum = (plot.plotNumber || '000').replace(/-P$/, '');
                 
-                plot.landCode = `${typeCode}-${regionCode}-${cniSegment}-${plot.plotNumber || '000'}`;
+                // Update landCode to use buyer's CNI segment (last 5 digits of buyer's CNI)
+                plot.landCode = `${typeCode}-${regionCode}-${cniSegment}-${cleanPlotNum}`;
                 plot.landType = typeCode; 
                 plot.owner = buyer._id;
                 plot.status = 'transferred';
@@ -383,16 +391,21 @@ exports.updateTransferStatus = async (req, res) => {
             }
 
             // Upgrade Client to Landowner role upon successful purchase/transfer completion
-            if (buyer && buyer.role === 'Client') {
-                await User.findByIdAndUpdate(buyer._id, { role: 'Landowner' });
+            const buyerId = buyer._id || buyer;
+            const buyerUser = await User.findById(buyerId);
+            if (buyerUser && buyerUser.role === 'Client') {
+                buyerUser.role = 'Landowner';
+                await buyerUser.save();
             }
 
             // Downgrade Seller to Client role if they no longer own any land plots
-            const seller = transfer.sender;
-            if (seller && seller.role === 'Landowner') {
-                const sellerPlots = await LandPlot.countDocuments({ owner: seller._id });
+            const sellerId = transfer.sender?._id || transfer.sender;
+            const sellerUser = await User.findById(sellerId);
+            if (sellerUser && sellerUser.role === 'Landowner') {
+                const sellerPlots = await LandPlot.countDocuments({ owner: sellerId });
                 if (sellerPlots === 0) {
-                    await User.findByIdAndUpdate(seller._id, { role: 'Client' });
+                    sellerUser.role = 'Client';
+                    await sellerUser.save();
                 }
             }
 
@@ -574,11 +587,11 @@ exports.getMyTransfers = async (req, res) => {
         } else if (req.user.role === 'Notary') {
             filters.notary = req.user.id;
         } else if (req.user.role === 'LRO') {
-            filters.lro = req.user.id;
+            filters.$or = [{ lro: req.user.id }, { status: 'Public_Notice' }];
         }
 
         const transfers = await TransferRequest.find(filters)
-            .select('plot sender receiver notary lro status transferType isSubdivision transferArea feeNotice publicNotice campayStatus campayReference paymentReceipt payoutStatus clientDocuments buyerDocuments certifiedDocuments notaryFeedback lroFeedback objections history createdAt updatedAt')
+            .select('plot sender receiver notary lro status transferType isSubdivision transferArea feeNotice publicNotice campayStatus campayReference paymentReceipt payoutStatus clientDocuments buyerDocuments certifiedDocuments notaryFeedback lroFeedback objections createdAt updatedAt')
             .populate({
                 path: 'plot',
                 select: 'landCode location area coverImage status plotNumber owner regionCode',
@@ -593,6 +606,14 @@ exports.getMyTransfers = async (req, res) => {
             .sort('-updatedAt')
             .lean();
 
+        // Fast ETag-based conditional response: skip re-sending identical payloads
+        const payload = JSON.stringify({ success: true, count: transfers.length, data: transfers });
+        const etag = require('crypto').createHash('md5').update(payload).digest('hex');
+        res.setHeader('ETag', `"${etag}"`);
+        res.setHeader('Cache-Control', 'no-cache');
+        if (req.headers['if-none-match'] === `"${etag}"`) {
+            return res.status(304).end();
+        }
         res.status(200).json({ success: true, count: transfers.length, data: transfers });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
@@ -609,6 +630,13 @@ exports.getPublicNotices = async (req, res) => {
             .sort('-updatedAt')
             .lean();
 
+        const payload = JSON.stringify({ success: true, data: notices });
+        const etag = require('crypto').createHash('md5').update(payload).digest('hex');
+        res.setHeader('ETag', `"${etag}"`);
+        res.setHeader('Cache-Control', 'no-cache');
+        if (req.headers['if-none-match'] === `"${etag}"`) {
+            return res.status(304).end();
+        }
         res.status(200).json({ success: true, data: notices });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
@@ -1041,6 +1069,124 @@ exports.campayWebhook = async (req, res) => {
         res.status(200).json({ success: true, message: 'Webhook received and processed' });
     } catch (err) {
         console.error('CamPay webhook error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+/**
+ * Client uploads MTN Mobile Money or Orange Money payment screenshot as proof.
+ * Sets status → Payment_Submitted and notifies the notary.
+ */
+exports.uploadPaymentProof = async (req, res) => {
+    try {
+        const transfer = await TransferRequest.findById(req.params.id)
+            .populate('plot sender notary');
+        if (!transfer) return res.status(404).json({ success: false, message: 'Transfer not found' });
+
+        if (transfer.status !== 'Awaiting_Fee_Payment') {
+            return res.status(400).json({
+                success: false,
+                message: transfer.status === 'Payment_Submitted'
+                    ? 'Payment proof already submitted. Awaiting notary confirmation.'
+                    : 'This transfer is not currently awaiting fee payment.'
+            });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: 'No screenshot file uploaded.' });
+        }
+
+        const proofPath = `/uploads/${req.file.filename}`;
+        const { momoReference, operator } = req.body; // 'MTN' or 'Orange'
+
+        transfer.paymentReceipt = proofPath;
+        // Store operator and manual reference in campayReference field
+        if (momoReference) {
+            transfer.campayReference = `MANUAL-${operator || 'MTN'}-${momoReference}`;
+        }
+        transfer.campayStatus = 'MANUAL_PENDING';
+        transfer.status = 'Payment_Submitted';
+
+        transfer.history.push({
+            status: 'Payment_Submitted',
+            updatedBy: req.user.id,
+            comment: `Client uploaded ${operator || 'Mobile Money'} payment proof${momoReference ? ` (Ref: ${momoReference})` : ''}. Awaiting notary confirmation.`
+        });
+
+        await transfer.save();
+
+        // Notify notary
+        if (transfer.notary) {
+            await Notification.create({
+                recipient: transfer.notary._id || transfer.notary,
+                sender: req.user.id,
+                type: 'system',
+                title: 'Payment Proof Uploaded',
+                message: `Client has uploaded ${operator || 'Mobile Money'} payment proof for plot ${transfer.plot.landCode}. Please review and confirm the payment.`,
+                relatedPlot: transfer.plot._id
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: 'Payment proof submitted successfully. Your notary has been notified.',
+            data: { status: transfer.status, proofPath }
+        });
+    } catch (err) {
+        console.error('Upload payment proof error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+/**
+ * Notary manually confirms a client-uploaded payment proof.
+ * Sets status → Payment_Verified and notifies the client.
+ */
+exports.confirmPaymentManually = async (req, res) => {
+    try {
+        const transfer = await TransferRequest.findById(req.params.id)
+            .populate('plot sender notary');
+        if (!transfer) return res.status(404).json({ success: false, message: 'Transfer not found' });
+
+        if (transfer.status !== 'Payment_Submitted') {
+            return res.status(400).json({ success: false, message: 'Transfer is not in Payment_Submitted status.' });
+        }
+
+        // Ensure caller is the assigned notary
+        const callerId = req.user.id || req.user._id;
+        const notaryId = transfer.notary?._id?.toString() || transfer.notary?.toString();
+        if (req.user.role !== 'Admin' && callerId.toString() !== notaryId) {
+            return res.status(403).json({ success: false, message: 'Only the assigned notary can confirm this payment.' });
+        }
+
+        transfer.campayStatus = 'MANUAL_VERIFIED';
+        transfer.status = 'Payment_Verified';
+
+        transfer.history.push({
+            status: 'Payment_Verified',
+            updatedBy: req.user.id,
+            comment: `Payment proof verified manually by Notary ${req.user.firstName} ${req.user.lastName}.`
+        });
+
+        await transfer.save();
+
+        // Notify client
+        await Notification.create({
+            recipient: transfer.sender._id || transfer.sender,
+            sender: req.user.id,
+            type: 'system',
+            title: 'Payment Confirmed ✓',
+            message: `Your payment for plot ${transfer.plot.landCode} has been confirmed by the Notary. The dossier is now being forwarded to the Land Registry Officer.`,
+            relatedPlot: transfer.plot._id
+        });
+
+        res.status(200).json({
+            success: true,
+            message: 'Payment confirmed successfully.',
+            data: { status: transfer.status }
+        });
+    } catch (err) {
+        console.error('Confirm payment manually error:', err);
         res.status(500).json({ success: false, message: err.message });
     }
 };

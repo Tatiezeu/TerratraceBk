@@ -28,6 +28,8 @@ router.post('/plot/:plotId/undispute', transferController.sendUndisputeRequest);
 router.get('/:id/progress', transferController.getTransferProgress); // Real-time tracker
 router.post('/:id/pay-fee', transferController.payFee);
 router.get('/:id/check-payment', transferController.checkPaymentStatus);
+router.post('/:id/upload-proof', upload.single('proofFile'), transferController.uploadPaymentProof);
+router.post('/:id/confirm-payment', restrictTo('Notary', 'Admin'), transferController.confirmPaymentManually);
 router.get('/:id', transferController.getTransferDetails);
 
 router.patch('/:id/status', upload.fields([

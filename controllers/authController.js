@@ -118,13 +118,21 @@ exports.verifyEmail = async (req, res) => {
     try {
         const { email, code } = req.body;
 
-        const user = await User.findOne({ 
-            email, 
-            verificationCode: code,
-            verificationCodeExpires: { $gt: Date.now() }
-        }).select('+verificationCode +verificationCodeExpires');
+        if (!email || !code) {
+            return res.status(400).json({ success: false, message: 'Email and verification code are required' });
+        }
+
+        const user = await User.findOne({ email }).select('+verificationCode +verificationCodeExpires');
 
         if (!user) {
+            return res.status(400).json({ success: false, message: 'User not found' });
+        }
+
+        const inputCode = String(code).trim();
+        const storedCode = String(user.verificationCode || '').trim();
+        const expiryTime = user.verificationCodeExpires ? new Date(user.verificationCodeExpires).getTime() : 0;
+
+        if (!user.verificationCode || storedCode !== inputCode || expiryTime < Date.now()) {
             return res.status(400).json({ success: false, message: 'Invalid or expired verification code' });
         }
 
@@ -218,8 +226,10 @@ exports.login = async (req, res) => {
             user.loginAttempts += 1;
             
             // Get config for max attempts
-            const maxAttemptsConfig = await SystemConfig.findOne({ key: 'maxLoginAttempts' });
-            const lockDurationConfig = await SystemConfig.findOne({ key: 'lockoutDuration' });
+            const [maxAttemptsConfig, lockDurationConfig] = await Promise.all([
+                SystemConfig.findOne({ key: 'maxLoginAttempts' }),
+                SystemConfig.findOne({ key: 'lockoutDuration' })
+            ]);
             
             const maxAttempts = maxAttemptsConfig ? parseInt(maxAttemptsConfig.value) : 5;
             const lockDuration = lockDurationConfig ? parseInt(lockDurationConfig.value) : 30; // minutes
@@ -246,10 +256,10 @@ exports.login = async (req, res) => {
         // Handle 2FA (or forced 2FA for suspicious scores)
         if (user.twoFactorEnabled || forceTwoFactor) {
             if (!twoFactorCode) {
-                // Generate and send 2FA code
+                // Generate and send 2FA code (expires in 15 minutes)
                 const code = generateVerificationCode();
                 user.verificationCode = code;
-                user.verificationCodeExpires = Date.now() + 10 * 60 * 1000;
+                user.verificationCodeExpires = Date.now() + 15 * 60 * 1000; // 15 minutes
                 await user.save();
 
                 // Send code via email
@@ -274,7 +284,11 @@ exports.login = async (req, res) => {
             }
 
             // Verify 2FA code
-            if (user.verificationCode !== twoFactorCode || user.verificationCodeExpires < Date.now()) {
+            const input2FACode = String(twoFactorCode).trim();
+            const stored2FACode = String(user.verificationCode || '').trim();
+            const expiryTime = user.verificationCodeExpires ? new Date(user.verificationCodeExpires).getTime() : 0;
+
+            if (!user.verificationCode || stored2FACode !== input2FACode || expiryTime < Date.now()) {
                 return res.status(400).json({ success: false, message: 'Invalid or expired 2FA code' });
             }
 
@@ -327,7 +341,7 @@ exports.resendCode = async (req, res) => {
             } else {
                 // If verified, standard 2FA code is sent
                 const verificationCode = generateVerificationCode();
-                const verificationCodeExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+                const verificationCodeExpires = Date.now() + 15 * 60 * 1000; // 15 minutes
 
                 user.verificationCode = verificationCode;
                 user.verificationCodeExpires = verificationCodeExpires;
@@ -415,7 +429,7 @@ exports.forgotPassword = async (req, res) => {
         // Build reset link using the verified frontend origin
         const frontendUrl = getFrontendUrl(req);
 
-        const resetLink = `${frontendUrl}/activate?token=${rawToken}&type=reset`;
+        const resetLink = `${frontendUrl}/reset-password?token=${rawToken}`;
 
         try {
             await sendEmail({

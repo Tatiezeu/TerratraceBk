@@ -87,10 +87,13 @@ const landPlotSchema = new mongoose.Schema({
     timestamps: true
 });
 
+// Performance indexes
 landPlotSchema.index({ owner: 1 });
+landPlotSchema.index({ owner: 1, status: 1 });
 landPlotSchema.index({ status: 1 });
 landPlotSchema.index({ regionCode: 1, status: 1 });
-landPlotSchema.index({ landCode: 1 });
+landPlotSchema.index({ regionCode: 1 });
+landPlotSchema.index({ landCode: 1 }, { unique: true, sparse: true });
 
 const LandPlot = mongoose.model('LandPlot', landPlotSchema);
 module.exports = LandPlot;
